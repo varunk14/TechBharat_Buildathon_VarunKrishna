@@ -555,6 +555,17 @@ async function summarizePdf(apiKey, tab) {
 }
 
 async function summarizeSelection(apiKey, tab) {
+  // Chrome's built-in PDF viewer is a plugin: text highlighted inside it is
+  // invisible to extensions, so a selection there can never be read. Say so
+  // honestly instead of showing a hint that cannot be satisfied.
+  if (isPdfUrl(tab.url ?? "")) {
+    showStatus(
+      "Chrome's PDF viewer does not share selected text with extensions. " +
+        "Use Whole page to read the full PDF, or Region to capture a part of it."
+    );
+    return;
+  }
+
   const text = await getSelectionText(tab.id);
   if (!text.trim()) {
     // A gentle prompt rather than an error: the user may have picked Selection

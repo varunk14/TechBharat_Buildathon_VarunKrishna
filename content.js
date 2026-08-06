@@ -102,8 +102,9 @@ if (!window.__glanceListenerRegistered) {
 
   // Draw a drag-to-select overlay above the page and resolve with the chosen
   // rectangle in CSS pixels, plus the devicePixelRatio the screenshot will be
-  // captured at. Escape cancels. Coordinates are viewport-relative (clientX/Y)
-  // to match captureVisibleTab, which captures the visible viewport.
+  // captured at. A click without dragging cancels; keyboard shortcuts are not
+  // used because Chrome's PDF viewer swallows key events. Coordinates are
+  // viewport-relative (clientX/Y) to match captureVisibleTab.
   function startRegion() {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
@@ -114,24 +115,20 @@ if (!window.__glanceListenerRegistered) {
       box.style.cssText =
         "position:fixed;border:2px solid #2563eb;background:rgba(37,99,235,0.15);" +
         "display:none;pointer-events:none;";
-      overlay.append(box);
+      const hint = document.createElement("div");
+      hint.textContent = "Drag to capture · click once to cancel";
+      hint.style.cssText =
+        "position:fixed;top:16px;left:50%;transform:translateX(-50%);" +
+        "padding:6px 12px;border-radius:6px;background:rgba(0,0,0,0.75);" +
+        "color:#fff;font:13px system-ui,sans-serif;pointer-events:none;";
+      overlay.append(box, hint);
       document.body.append(overlay);
 
       let startX = 0;
       let startY = 0;
       let dragging = false;
 
-      const cleanup = () => {
-        overlay.remove();
-        document.removeEventListener("keydown", onKey, true);
-      };
-      const onKey = (event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          cleanup();
-          resolve({ cancelled: true });
-        }
-      };
+      const cleanup = () => overlay.remove();
 
       overlay.addEventListener("mousedown", (event) => {
         dragging = true;
@@ -155,16 +152,19 @@ if (!window.__glanceListenerRegistered) {
       overlay.addEventListener("mouseup", (event) => {
         if (!dragging) return;
         dragging = false;
-        const rect = {
-          x: startX,
-          y: startY,
-          width: event.clientX - startX,
-          height: event.clientY - startY,
-        };
+        const width = event.clientX - startX;
+        const height = event.clientY - startY;
+        // A click (or near-click) cancels. Mouse-only on purpose: Chrome's PDF
+        // viewer swallows key events, so a keyboard cancel cannot be relied on.
+        if (Math.abs(width) < 8 && Math.abs(height) < 8) {
+          cleanup();
+          resolve({ cancelled: true });
+          return;
+        }
+        const rect = { x: startX, y: startY, width, height };
         cleanup();
         resolve({ rect, dpr: window.devicePixelRatio || 1 });
       });
-      document.addEventListener("keydown", onKey, true);
     });
   }
 
