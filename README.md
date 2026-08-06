@@ -1,8 +1,7 @@
-# Lens
+# Glance
 
 A Chrome extension that summarizes whatever is on screen, in place, without leaving the tab. One keyboard shortcut turns a long article, pull request, dashboard or paper into a two-line summary, key points, extracted numbers and action items.
 
-> Replace this line with a screenshot of the side panel open on a real page.
 
 ## Why
 
