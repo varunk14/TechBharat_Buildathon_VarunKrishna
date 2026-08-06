@@ -15,8 +15,12 @@
           <h1 id="panel-title">Glance</h1>
           <span id="mode-badge" class="badge" hidden></span>
           <span id="method-badge" class="badge" hidden></span>
+          <span id="redact-badge" class="badge" hidden></span>
         </div>
         <div class="header-actions">
+          <button id="history-toggle" type="button" class="link-button">
+            History
+          </button>
           <button id="copy" type="button" class="link-button" hidden>Copy</button>
           <button id="download" type="button" class="link-button" hidden>
             Download
@@ -49,6 +53,11 @@
           <option value="bn">Bengali</option>
           <option value="mr">Marathi</option>
         </select>
+
+        <label class="check">
+          <input type="checkbox" id="privacy" />
+          Privacy
+        </label>
 
         <label for="domain-mode">Mode</label>
         <select id="domain-mode">
@@ -83,6 +92,15 @@
         </div>
 
         <div id="cards" hidden></div>
+
+        <div id="history-view" hidden>
+          <input
+            id="history-search"
+            type="search"
+            placeholder="Search past summaries"
+          />
+          <div id="history-list"></div>
+        </div>
 
         <div id="error" class="error" role="alert" hidden>
           <h2 id="error-title"></h2>

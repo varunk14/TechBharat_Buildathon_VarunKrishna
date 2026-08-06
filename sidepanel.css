@@ -266,6 +266,52 @@ body {
   color: var(--muted);
 }
 
+.check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#history-search {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.history-row:hover {
+  border-color: var(--accent);
+}
+
+.history-row .muted {
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .link-button {
   padding: 0;
   font: inherit;

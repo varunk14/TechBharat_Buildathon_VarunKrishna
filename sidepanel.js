@@ -16,6 +16,10 @@ import {
 import { estimateTokens, chunkText } from "./lib/chunk.js";
 import { sourceRect, isValidRect } from "./lib/crop.js";
 import { bytesToBase64 } from "./lib/image.js";
+import { isPdfUrl, extractPdfText, pdfNeedsVisionFallback } from "./lib/pdf.js";
+import { redact } from "./lib/redact.js";
+import { addEntry, searchEntries } from "./lib/history.js";
+import { get as storageGet, set as storageSet } from "./lib/storage.js";
 import { buildMessages } from "./lib/conversation.js";
 import { preflight, textError, titleFor, messageFor } from "./lib/errors.js";
 import {
@@ -36,6 +40,12 @@ const domainModeSelect = document.getElementById("domain-mode");
 const emptyState = document.getElementById("empty-state");
 const modeBadge = document.getElementById("mode-badge");
 const methodBadge = document.getElementById("method-badge");
+const redactBadge = document.getElementById("redact-badge");
+const privacyToggle = document.getElementById("privacy");
+const historyView = document.getElementById("history-view");
+const historySearch = document.getElementById("history-search");
+const historyList = document.getElementById("history-list");
+const historyToggle = document.getElementById("history-toggle");
 const counter = document.getElementById("counter");
 const skeleton = document.getElementById("skeleton");
 const cards = document.getElementById("cards");
@@ -64,6 +74,8 @@ let captureMode = captureModeSelect.value;
 // Output language code and the domain-mode override ("auto" resolves per URL).
 let language = "en";
 let modeOverride = domainModeSelect.value;
+// When on, identifiers are masked before any text leaves the browser.
+let privacyMode = false;
 
 // Build one card per section once, and keep a handle to each body element so
 // streaming updates only touch text, never rebuild the DOM.
@@ -129,12 +141,12 @@ function renderCards(sections, { final } = { final: false }) {
 }
 
 function showSkeleton() {
-  hide(emptyState, cards, errorBox, counter, methodBadge, modeBadge, copyButton, downloadButton);
+  hide(emptyState, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
   show(skeleton);
 }
 
 function showEmptyState() {
-  hide(skeleton, cards, errorBox, counter, methodBadge, modeBadge, copyButton, downloadButton);
+  hide(skeleton, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
   show(emptyState);
 }
 
@@ -156,6 +168,7 @@ function setBadge(method) {
     heuristic: "Heuristic",
     selection: "Selection",
     region: "Region",
+    pdf: "PDF",
   };
   methodBadge.textContent = labels[method] || method;
   show(methodBadge);
@@ -164,7 +177,7 @@ function setBadge(method) {
 // A one-line status in place of the cards: drag prompts, section progress, etc.
 function showStatus(message) {
   counter.textContent = message;
-  hide(emptyState, skeleton, cards, errorBox, methodBadge, modeBadge, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, errorBox, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
   show(counter);
 }
 
@@ -174,7 +187,7 @@ function showCounter(done, total) {
 }
 
 function showError({ code, message }, action) {
-  hide(emptyState, skeleton, cards, counter, methodBadge, modeBadge, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
   errorTitle.textContent = titleFor(code);
   errorMessage.textContent = message || messageFor(code);
   errorCode.textContent = code;
@@ -346,8 +359,20 @@ async function askFollowup(question) {
   }
 }
 
-// Store the finished summary for export and reveal the export buttons.
-function finalizeSummary(sections, title, url) {
+// Redact when privacy mode is on, and surface the count as a badge. Runs
+// before setContext and the request body are built, so redacted values never
+// reach the network in the summary or in follow-ups.
+function applyPrivacy(text) {
+  if (!privacyMode) return text;
+  const { text: cleaned, count } = redact(text);
+  redactBadge.textContent = `${count} redacted`;
+  show(redactBadge);
+  return cleaned;
+}
+
+// Store the finished summary for export, reveal the export buttons, and add it
+// to the local history (capped in lib/history.js).
+async function finalizeSummary(sections, title, url) {
   if (!sections) {
     showError({
       code: "MODEL_DECLINED",
@@ -357,9 +382,71 @@ function finalizeSummary(sections, title, url) {
   }
   lastSummary = { title, url, sections };
   show(copyButton, downloadButton);
+
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title,
+    url,
+    timestamp: Date.now(),
+    sections,
+  };
+  const list = (await storageGet("history")) || [];
+  await storageSet("history", addEntry(list, entry));
+}
+
+// Render the history list, filtered by the search box, newest first.
+async function renderHistory() {
+  const list = (await storageGet("history")) || [];
+  const matches = searchEntries(list, historySearch.value);
+  historyList.textContent = "";
+  if (!matches.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = list.length ? "No matches." : "No summaries yet.";
+    historyList.append(empty);
+    return;
+  }
+  for (const item of matches) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "history-row";
+    const title = document.createElement("strong");
+    title.textContent = item.title || "Untitled";
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    meta.textContent = `${new Date(item.timestamp).toLocaleString()} · ${item.url}`;
+    row.append(title, meta);
+    row.addEventListener("click", () => {
+      // Restore the stored summary into the cards for reading and export.
+      hide(historyView, emptyState, errorBox, counter);
+      renderCards(item.sections, { final: true });
+      show(cards);
+      lastSummary = { title: item.title, url: item.url, sections: item.sections };
+      show(copyButton, downloadButton);
+    });
+    historyList.append(row);
+  }
+}
+
+function toggleHistory() {
+  if (historyView.hidden) {
+    hide(emptyState, skeleton, cards, errorBox, counter);
+    show(historyView);
+    renderHistory();
+  } else {
+    hide(historyView);
+    if (lastSummary) show(cards);
+    else showEmptyState();
+  }
 }
 
 async function summarizePage(apiKey, tab) {
+  // A PDF has no readable DOM to inject into; parse its bytes with pdf.js.
+  if (isPdfUrl(tab.url ?? "")) {
+    await summarizePdf(apiKey, tab);
+    return;
+  }
+
   const page = await extractPage(tab.id);
   const readableChars = page?.text?.trim().length ?? 0;
   const thin = textError(readableChars);
@@ -374,17 +461,41 @@ async function summarizePage(apiKey, tab) {
   const mode = effectiveMode(tab.url ?? "");
   setModeBadge(mode);
   setBadge(page.method);
-  setContext({ text: page.text, title: page.title, url: page.url });
+  const cleaned = applyPrivacy(page.text);
+  setContext({ text: cleaned, title: page.title, url: page.url });
   const systemPrompt = composeSystemPrompt(SUMMARY_SYSTEM_PROMPT, {
     modeKey: mode,
     langCode: language,
   });
-  const sections = await summarizeText(apiKey, page.text, systemPrompt);
+  const sections = await summarizeText(apiKey, cleaned, systemPrompt);
   finalizeSummary(sections, page.title, page.url);
 }
 
-// Capture the whole visible tab and summarize it as an image. Used as the
-// "summarize visually" fallback for canvas or image-only pages.
+// Screenshot the visible tab and summarize it as an image. The core is shared
+// by the "summarize visually" button and the PDF fallback; it assumes an API
+// key and the running guard are already handled by the caller.
+async function visualSummarize(apiKey, tab) {
+  const dataUrl = await chrome.runtime.sendMessage({
+    type: "CAPTURE_TAB",
+    windowId: tab.windowId,
+  });
+  if (!dataUrl) {
+    showError({ code: "NETWORK", message: "Could not capture the screen." });
+    return;
+  }
+  const image = { mimeType: "image/png", data: dataUrl.split(",")[1] };
+  setBadge("region");
+  setContext({ image, text: "", title: tab.title, url: tab.url });
+  const sections = await streamStructured(apiKey, {
+    userText: REGION_USER_PROMPT,
+    image,
+    systemPrompt: composeSystemPrompt(VISION_SYSTEM_PROMPT, { langCode: language }),
+  });
+  finalizeSummary(sections, tab.title, tab.url);
+}
+
+// The "summarize visually" fallback button handler: owns the running guard and
+// key check, then runs the shared visual summary.
 async function summarizeVisibleTab(tab) {
   if (running) return;
   running = true;
@@ -395,31 +506,42 @@ async function summarizeVisibleTab(tab) {
       showError({ code: "NO_KEY", message: messageFor("NO_KEY") });
       return;
     }
-    const dataUrl = await chrome.runtime.sendMessage({
-      type: "CAPTURE_TAB",
-      windowId: tab.windowId,
-    });
-    if (!dataUrl) {
-      showError({ code: "NETWORK", message: "Could not capture the screen." });
-      return;
-    }
-    const image = { mimeType: "image/png", data: dataUrl.split(",")[1] };
-    setBadge("region");
-    setContext({ image, text: "", title: tab.title, url: tab.url });
-    const sections = await streamStructured(apiKey, {
-      userText: REGION_USER_PROMPT,
-      image,
-      systemPrompt: composeSystemPrompt(VISION_SYSTEM_PROMPT, {
-        langCode: language,
-      }),
-    });
-    finalizeSummary(sections, tab.title, tab.url);
+    await visualSummarize(apiKey, tab);
   } catch (error) {
     console.error("Visual summary failed:", error?.code || "", error?.message || error);
     showError(error?.code ? error : { code: "NETWORK", message: messageFor("NETWORK") });
   } finally {
     running = false;
   }
+}
+
+// Parse a PDF's text with pdf.js and summarize it. Falls back to the visual
+// route when parsing yields too little text (scanned or image-only PDFs).
+async function summarizePdf(apiKey, tab) {
+  showStatus("Reading the PDF…");
+  let text = "";
+  try {
+    text = await extractPdfText(tab.url);
+  } catch (error) {
+    console.error("PDF parse failed:", error?.message || error);
+  }
+
+  if (pdfNeedsVisionFallback(text)) {
+    await visualSummarize(apiKey, tab);
+    return;
+  }
+
+  const mode = effectiveMode(tab.url ?? "");
+  setModeBadge(mode);
+  setBadge("pdf");
+  const cleaned = applyPrivacy(text);
+  setContext({ text: cleaned, title: tab.title, url: tab.url });
+  const systemPrompt = composeSystemPrompt(SUMMARY_SYSTEM_PROMPT, {
+    modeKey: mode,
+    langCode: language,
+  });
+  const sections = await summarizeText(apiKey, cleaned, systemPrompt);
+  finalizeSummary(sections, tab.title, tab.url);
 }
 
 async function summarizeSelection(apiKey, tab) {
@@ -433,12 +555,13 @@ async function summarizeSelection(apiKey, tab) {
   const mode = effectiveMode(tab.url ?? "");
   setModeBadge(mode);
   setBadge("selection");
-  setContext({ text, title: tab.title, url: tab.url });
+  const cleaned = applyPrivacy(text);
+  setContext({ text: cleaned, title: tab.title, url: tab.url });
   const systemPrompt = composeSystemPrompt(SUMMARY_SYSTEM_PROMPT, {
     modeKey: mode,
     langCode: language,
   });
-  const sections = await summarizeText(apiKey, text, systemPrompt);
+  const sections = await summarizeText(apiKey, cleaned, systemPrompt);
   finalizeSummary(sections, tab.title, tab.url);
 }
 
@@ -596,6 +719,14 @@ domainModeSelect.addEventListener("change", () => {
   modeOverride = domainModeSelect.value;
   reSummarize();
 });
+
+privacyToggle.addEventListener("change", () => {
+  privacyMode = privacyToggle.checked;
+  reSummarize();
+});
+
+historyToggle.addEventListener("click", toggleHistory);
+historySearch.addEventListener("input", renderHistory);
 
 // Restore the saved output language so it persists across sessions.
 getLanguage().then((saved) => {
