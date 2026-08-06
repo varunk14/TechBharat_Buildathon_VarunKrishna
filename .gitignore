@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# secrets - never commit
+.env
+.env.*
+*.key
+*key.json
+secrets.json
+config.local.js
+
+# internal working documents - not part of the shipped project
+CLAUDE.md
+PRD.md
+progress.txt
+docs/TESTING.md
+notes/
+scratch/
+
+# build and test output
+dist/
+coverage/
+*.zip
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# os
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
