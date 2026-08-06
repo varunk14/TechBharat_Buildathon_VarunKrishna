@@ -11,6 +11,7 @@ import {
   REGION_USER_PROMPT,
   VISION_SYSTEM_PROMPT,
   FOLLOWUP_SYSTEM_PROMPT,
+  SYNTHESIS_SYSTEM_PROMPT,
   composeSystemPrompt,
 } from "./lib/prompts.js";
 import { estimateTokens, chunkText } from "./lib/chunk.js";
@@ -19,6 +20,7 @@ import { bytesToBase64 } from "./lib/image.js";
 import { isPdfUrl, extractPdfText, pdfNeedsVisionFallback } from "./lib/pdf.js";
 import { redact } from "./lib/redact.js";
 import { addEntry, searchEntries } from "./lib/history.js";
+import { buildSynthesisInput, MAX_SYNTHESIS_TABS } from "./lib/synthesis.js";
 import { get as storageGet, set as storageSet } from "./lib/storage.js";
 import { buildMessages } from "./lib/conversation.js";
 import { preflight, textError, titleFor, messageFor } from "./lib/errors.js";
@@ -28,6 +30,7 @@ import {
   getSection,
   buildExportMarkdown,
   safeFilename,
+  extractQuote,
 } from "./lib/markdown.js";
 
 // Below this many estimated tokens a page is summarized in one request; above
@@ -46,6 +49,10 @@ const historyView = document.getElementById("history-view");
 const historySearch = document.getElementById("history-search");
 const historyList = document.getElementById("history-list");
 const historyToggle = document.getElementById("history-toggle");
+const synthView = document.getElementById("synth-view");
+const synthList = document.getElementById("synth-list");
+const synthRun = document.getElementById("synth-run");
+const synthToggle = document.getElementById("synth-toggle");
 const counter = document.getElementById("counter");
 const skeleton = document.getElementById("skeleton");
 const cards = document.getElementById("cards");
@@ -125,13 +132,30 @@ function renderCardBody(body, content, { final }) {
       const item = line.replace(/^\s*[-*]\s+/, "").trim();
       if (!item) continue;
       const li = document.createElement("li");
-      li.textContent = item;
+      // A bullet may carry a verbatim source phrase; clicking scrolls the page
+      // to it and highlights it.
+      const { text, quote } = extractQuote(item);
+      li.textContent = text;
+      if (quote) {
+        li.classList.add("has-quote");
+        li.title = "Click to see this on the page";
+        li.addEventListener("click", () => highlightOnPage(quote));
+      }
       list.append(li);
     }
     body.append(list);
   } else {
     body.textContent = trimmed;
   }
+}
+
+// Ask the captured tab to scroll to and highlight the phrase. Fails silently:
+// the tab may have navigated away, or (in the PDF viewer) have no readable DOM.
+function highlightOnPage(quote) {
+  if (lastTabId == null) return;
+  chrome.tabs
+    .sendMessage(lastTabId, { type: "HIGHLIGHT_PHRASE", phrase: quote })
+    .catch(() => {});
 }
 
 function renderCards(sections, { final } = { final: false }) {
@@ -141,12 +165,12 @@ function renderCards(sections, { final } = { final: false }) {
 }
 
 function showSkeleton() {
-  hide(emptyState, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
+  hide(emptyState, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, synthView, copyButton, downloadButton);
   show(skeleton);
 }
 
 function showEmptyState() {
-  hide(skeleton, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
+  hide(skeleton, cards, errorBox, counter, methodBadge, modeBadge, redactBadge, historyView, synthView, copyButton, downloadButton);
   show(emptyState);
 }
 
@@ -169,6 +193,7 @@ function setBadge(method) {
     selection: "Selection",
     region: "Region",
     pdf: "PDF",
+    synthesis: "3 tabs",
   };
   methodBadge.textContent = labels[method] || method;
   show(methodBadge);
@@ -177,7 +202,7 @@ function setBadge(method) {
 // A one-line status in place of the cards: drag prompts, section progress, etc.
 function showStatus(message) {
   counter.textContent = message;
-  hide(emptyState, skeleton, cards, errorBox, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, errorBox, methodBadge, modeBadge, redactBadge, historyView, synthView, copyButton, downloadButton);
   show(counter);
 }
 
@@ -187,7 +212,7 @@ function showCounter(done, total) {
 }
 
 function showError({ code, message }, action) {
-  hide(emptyState, skeleton, cards, counter, methodBadge, modeBadge, redactBadge, historyView, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, counter, methodBadge, modeBadge, redactBadge, historyView, synthView, copyButton, downloadButton);
   errorTitle.textContent = titleFor(code);
   errorMessage.textContent = message || messageFor(code);
   errorCode.textContent = code;
@@ -439,11 +464,110 @@ async function renderHistory() {
 
 function toggleHistory() {
   if (historyView.hidden) {
-    hide(emptyState, skeleton, cards, errorBox, counter);
+    hide(emptyState, skeleton, cards, errorBox, counter, synthView);
     show(historyView);
     renderHistory();
   } else {
     hide(historyView);
+    if (lastSummary) show(cards);
+    else showEmptyState();
+  }
+}
+
+// List open tabs; a tab is selectable when a summary of its URL is in history.
+// activeTab cannot read other tabs, so synthesis works from stored summaries:
+// the user summarizes each tab once (which grants access), then compares.
+async function renderSynthList() {
+  const [tabs, list] = await Promise.all([
+    chrome.tabs.query({ currentWindow: true }),
+    storageGet("history").then((l) => l || []),
+  ]);
+  synthList.textContent = "";
+  for (const tab of tabs) {
+    if (!/^https?:/.test(tab.url || "")) continue;
+    const capture = list.find((e) => e.url === tab.url);
+    const row = document.createElement("label");
+    row.className = "synth-row";
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.disabled = !capture;
+    if (capture) check.dataset.url = tab.url;
+    const text = document.createElement("span");
+    text.textContent = tab.title || tab.url;
+    if (!capture) {
+      text.classList.add("muted");
+      text.textContent += " — summarize this tab first";
+    }
+    row.append(check, text);
+    synthList.append(row);
+  }
+  updateSynthButton();
+}
+
+function selectedSynthUrls() {
+  return [...synthList.querySelectorAll("input:checked")].map(
+    (check) => check.dataset.url
+  );
+}
+
+function updateSynthButton() {
+  const count = selectedSynthUrls().length;
+  synthRun.disabled = count < 2 || count > MAX_SYNTHESIS_TABS;
+  synthRun.textContent =
+    count > MAX_SYNTHESIS_TABS
+      ? `Pick at most ${MAX_SYNTHESIS_TABS}`
+      : "Compare selected";
+}
+
+async function runSynthesis() {
+  const urls = selectedSynthUrls();
+  const list = (await storageGet("history")) || [];
+  const entries = urls
+    .map((url) => list.find((e) => e.url === url))
+    .filter(Boolean);
+  if (entries.length < 2) return;
+
+  if (running) return;
+  running = true;
+  showSkeleton();
+  try {
+    const apiKey = await getApiKey();
+    if (!apiKey) {
+      showError({ code: "NO_KEY", message: messageFor("NO_KEY") });
+      return;
+    }
+    const input = buildSynthesisInput(entries);
+    modeBadge.textContent = "Comparison";
+    show(modeBadge);
+    setBadge("synthesis");
+    // Follow-ups run against the combined summaries.
+    setContext({ text: input, title: "Comparison", url: "" });
+    const sections = await streamStructured(apiKey, {
+      userText: input,
+      systemPrompt: composeSystemPrompt(SYNTHESIS_SYSTEM_PROMPT, {
+        langCode: language,
+      }),
+    });
+    finalizeSummary(
+      sections,
+      `Comparison of ${entries.length} tabs`,
+      entries.map((e) => e.url).join(" | ")
+    );
+  } catch (error) {
+    console.error("Synthesis failed:", error?.code || "", error?.message || error);
+    showError(error?.code ? error : { code: "NETWORK", message: messageFor("NETWORK") });
+  } finally {
+    running = false;
+  }
+}
+
+function toggleSynth() {
+  if (synthView.hidden) {
+    hide(emptyState, skeleton, cards, errorBox, counter, historyView);
+    show(synthView);
+    renderSynthList();
+  } else {
+    hide(synthView);
     if (lastSummary) show(cards);
     else showEmptyState();
   }
@@ -750,6 +874,9 @@ privacyToggle.addEventListener("change", () => {
 
 historyToggle.addEventListener("click", toggleHistory);
 historySearch.addEventListener("input", renderHistory);
+synthToggle.addEventListener("click", toggleSynth);
+synthList.addEventListener("change", updateSynthButton);
+synthRun.addEventListener("click", runSynthesis);
 
 // Restore the saved output language so it persists across sessions.
 getLanguage().then((saved) => {

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseSections, safeFilename } from "../lib/markdown.js";
+import {
+  parseSections,
+  safeFilename,
+  extractQuote,
+  stripQuotes,
+  buildExportMarkdown,
+} from "../lib/markdown.js";
 
 const complete = `## TL;DR
 A short two-line summary of the page.
@@ -47,6 +53,38 @@ A short summary.
   it("returns an empty object for text with no headers", () => {
     expect(parseSections("just some prose with no headings at all")).toEqual({});
     expect(parseSections("")).toEqual({});
+  });
+});
+
+describe("extractQuote", () => {
+  it("splits a bullet into display text and its source phrase", () => {
+    const { text, quote } = extractQuote(
+      "Profits rose sharply this quarter. [[profit of Rs. 13,492 crore]]"
+    );
+    expect(text).toBe("Profits rose sharply this quarter.");
+    expect(quote).toBe("profit of Rs. 13,492 crore");
+  });
+
+  it("returns a null quote when no marker is present", () => {
+    expect(extractQuote("Plain point.")).toEqual({
+      text: "Plain point.",
+      quote: null,
+    });
+  });
+});
+
+describe("stripQuotes", () => {
+  it("removes markers from exported markdown", () => {
+    const sections = {
+      "TL;DR": "Short.",
+      "Key Points": "- A point. [[source phrase]]",
+      Numbers: "None found",
+      "Actions & Decisions": "None found",
+    };
+    const out = buildExportMarkdown({ title: "T", url: "u", sections });
+    expect(out).toContain("A point.");
+    expect(out).not.toContain("[[");
+    expect(stripQuotes("x [[y]] z")).toBe("x z");
   });
 });
 

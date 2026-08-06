@@ -20,6 +20,8 @@ The information a knowledge worker needs is almost always already on screen. The
 - Follow-up questions against the captured page, with no re-capture
 - Streaming responses with progress visible in under two seconds
 - Copy to clipboard and export as markdown
+- Cross-tab comparison: pick up to three summarized tabs and get one comparative summary
+- Click a key point to scroll the page to its source phrase and highlight it
 - Searchable local history of past summaries
 - Privacy mode: emails, phone numbers, PAN, Aadhaar and card numbers are masked before anything leaves the browser, with a visible count
 - Honest failure: unreadable pages produce a specific reason, never a fabricated summary
@@ -61,6 +63,8 @@ The key is stored in `chrome.storage.local`. It stays on your machine and is sen
 | Change the output language | Pick a language in the panel bar; the summary re-runs |
 | Ask a follow-up | Type in the box at the bottom of the panel and press Enter |
 | Export | Use Copy or Download in the panel header |
+| Compare tabs | Summarize each tab once, click Compare, pick two or three, Compare selected |
+| Jump to a source | Click any key point; the page scrolls to and highlights the phrase |
 | Find a past summary | Click History and search by title, address or content |
 | Mask personal data | Tick Privacy before summarizing; the count of masked items is shown |
 

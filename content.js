@@ -183,5 +183,63 @@ if (!window.__glanceListenerRegistered) {
       startRegion().then(sendResponse);
       return true;
     }
+    if (message?.type === "HIGHLIGHT_PHRASE") {
+      sendResponse({ found: highlightPhrase(message.phrase) });
+      return;
+    }
   });
+
+  // Scroll to the first occurrence of a phrase and flash-highlight it. Search
+  // is case-insensitive over normalized whitespace, walking text nodes so the
+  // phrase is found even when the page wraps it in inline markup is not needed
+  // (a phrase spanning multiple elements is simply reported as not found).
+  function highlightPhrase(phrase) {
+    for (const old of document.querySelectorAll(".glance-highlight")) {
+      old.replaceWith(...old.childNodes);
+    }
+    const needle = (phrase || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!needle) return false;
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const haystack = node.textContent.replace(/\s+/g, " ").toLowerCase();
+      const at = haystack.indexOf(needle);
+      if (at < 0) continue;
+      const parentTag = node.parentElement && node.parentElement.tagName;
+      if (parentTag === "SCRIPT" || parentTag === "STYLE") continue;
+
+      // Map the match position in the normalized text back to the raw text by
+      // scanning while collapsing runs of whitespace the same way.
+      let raw = 0;
+      let norm = 0;
+      const rawText = node.textContent;
+      while (norm < at && raw < rawText.length) {
+        if (/\s/.test(rawText[raw]) && raw > 0 && /\s/.test(rawText[raw - 1])) {
+          raw += 1;
+          continue;
+        }
+        raw += 1;
+        norm += 1;
+      }
+      const range = document.createRange();
+      range.setStart(node, Math.min(raw, rawText.length));
+      range.setEnd(node, Math.min(raw + phrase.length, rawText.length));
+
+      const mark = document.createElement("span");
+      mark.className = "glance-highlight";
+      mark.style.cssText =
+        "background:#fde047;color:#111;border-radius:3px;padding:0 2px;";
+      try {
+        range.surroundContents(mark);
+      } catch (error) {
+        // The range crossed an element boundary; scroll to the node instead.
+        node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return true;
+      }
+      mark.scrollIntoView({ behavior: "smooth", block: "center" });
+      return true;
+    }
+    return false;
+  }
 }

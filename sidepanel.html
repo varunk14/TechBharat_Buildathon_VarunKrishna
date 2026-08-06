@@ -18,6 +18,9 @@
           <span id="redact-badge" class="badge" hidden></span>
         </div>
         <div class="header-actions">
+          <button id="synth-toggle" type="button" class="link-button">
+            Compare
+          </button>
           <button id="history-toggle" type="button" class="link-button">
             History
           </button>
@@ -92,6 +95,15 @@
         </div>
 
         <div id="cards" hidden></div>
+
+        <div id="synth-view" hidden>
+          <p class="muted">
+            Pick up to three open tabs to compare. A tab becomes selectable
+            after you have summarized it once.
+          </p>
+          <div id="synth-list"></div>
+          <button id="synth-run" type="button" disabled>Compare selected</button>
+        </div>
 
         <div id="history-view" hidden>
           <input

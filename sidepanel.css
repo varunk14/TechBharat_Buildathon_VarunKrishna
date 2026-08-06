@@ -202,6 +202,15 @@ body {
   margin-bottom: 4px;
 }
 
+.card-body li.has-quote {
+  cursor: pointer;
+}
+
+.card-body li.has-quote:hover {
+  text-decoration: underline dotted;
+  color: var(--accent);
+}
+
 .error {
   padding: 12px;
   border: 1px solid var(--border);
@@ -310,6 +319,35 @@ body {
 .history-row .muted {
   font-size: 12px;
   word-break: break-all;
+}
+
+#synth-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.synth-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+#synth-run {
+  padding: 8px 14px;
+  font: inherit;
+  color: #ffffff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#synth-run:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .link-button {
