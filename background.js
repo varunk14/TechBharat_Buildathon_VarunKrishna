@@ -34,3 +34,18 @@ chrome.commands.onCommand.addListener((command, tab) => {
   if (command !== "open-side-panel") return;
   requestSummary(tab);
 });
+
+// Capture the visible tab for region mode. The side panel cannot call
+// captureVisibleTab itself (it is not the active tab), so it asks the worker,
+// which has the activeTab grant from the invoking gesture.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "CAPTURE_TAB") return;
+  chrome.tabs
+    .captureVisibleTab(message.windowId, { format: "png" })
+    .then(sendResponse)
+    .catch((error) => {
+      console.error("captureVisibleTab failed", error);
+      sendResponse(null);
+    });
+  return true;
+});

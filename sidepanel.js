@@ -4,8 +4,13 @@
 
 import { getApiKey } from "./lib/storage.js";
 import { streamModel } from "./lib/providers/index.js";
-import { SUMMARY_SYSTEM_PROMPT, CHUNK_MAP_PROMPT } from "./lib/prompts.js";
+import {
+  SUMMARY_SYSTEM_PROMPT,
+  CHUNK_MAP_PROMPT,
+  REGION_USER_PROMPT,
+} from "./lib/prompts.js";
 import { estimateTokens, chunkText } from "./lib/chunk.js";
+import { sourceRect, isValidRect } from "./lib/crop.js";
 import {
   SECTIONS,
   parseSections,
@@ -20,6 +25,7 @@ const SINGLE_PASS_TOKEN_LIMIT = 6000;
 // Minimum readable characters before a page counts as summarizable (PRD 7.8).
 const MIN_TEXT_CHARS = 200;
 
+const captureModeSelect = document.getElementById("capture-mode");
 const emptyState = document.getElementById("empty-state");
 const methodBadge = document.getElementById("method-badge");
 const counter = document.getElementById("counter");
@@ -38,6 +44,8 @@ let lastSummary = null;
 let lastTabId = null;
 // Guards against two triggers (on-load read and wake message) racing.
 let running = false;
+// The selected capture mode: "page", "selection" or "region".
+let captureMode = captureModeSelect.value;
 
 // Build one card per section once, and keep a handle to each body element so
 // streaming updates only touch text, never rebuild the DOM.
@@ -136,18 +144,28 @@ function showEmptyState() {
   show(emptyState);
 }
 
-// Name the extraction method that produced the text, as a header badge.
+// Name the capture or extraction method that produced the summary, as a badge.
 function setBadge(method) {
-  const labels = { readability: "Readability", heuristic: "Heuristic" };
+  const labels = {
+    readability: "Readability",
+    heuristic: "Heuristic",
+    selection: "Selection",
+    region: "Region",
+  };
   methodBadge.textContent = labels[method] || method;
   show(methodBadge);
 }
 
+// A one-line status in place of the cards: drag prompts, section progress, etc.
+function showStatus(message) {
+  counter.textContent = message;
+  hide(emptyState, skeleton, cards, errorBox, methodBadge, copyButton, downloadButton);
+  show(counter);
+}
+
 // Long pages are read section by section; show progress in place of tokens.
 function showCounter(done, total) {
-  counter.textContent = `Reading section ${done} of ${total}`;
-  hide(skeleton);
-  show(counter);
+  showStatus(`Reading section ${done} of ${total}`);
 }
 
 function showError({ code, message }, action) {
@@ -164,15 +182,49 @@ function showError({ code, message }, action) {
   show(errorBox);
 }
 
-// Inject the extraction code on demand and ask it for the page text. Readability
-// and lib/extract.js load first so the content script can use them; all three
-// guard against re-running, so re-injecting on each run is safe.
-async function extractPage(tabId) {
+// Inject the extraction code on demand. Readability and lib/extract.js load
+// first so the content script can use them; all three guard against re-running,
+// so re-injecting on each run is safe.
+async function injectContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["vendor/Readability.js", "lib/extract.js", "content.js"],
   });
+}
+
+async function extractPage(tabId) {
+  await injectContentScript(tabId);
   return chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PAGE" });
+}
+
+async function getSelectionText(tabId) {
+  await injectContentScript(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, { type: "GET_SELECTION" });
+  return response?.text ?? "";
+}
+
+// Crop the captured screenshot to the drawn region and return it as base64.
+// Coordinates are scaled by devicePixelRatio inside sourceRect.
+async function cropImage(dataUrl, rect, dpr) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const { sx, sy, sw, sh } = sourceRect(rect, dpr);
+  const canvas = new OffscreenCanvas(sw, sh);
+  const context = canvas.getContext("2d");
+  context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+  const cropped = await canvas.convertToBlob({ type: "image/png" });
+  const data = await blobToBase64(cropped);
+  return { mimeType: "image/png", data };
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    // Strip the "data:image/png;base64," prefix; the API wants raw base64.
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 // Collect a full model response without rendering, for the map step.
@@ -182,15 +234,16 @@ async function collectModel(args) {
   return full;
 }
 
-// Stream a structured summary into the cards. Returns the parsed sections, or
-// null if the model produced nothing.
-async function streamStructured(apiKey, userText) {
+// Stream a structured summary into the cards. Accepts text and/or an image.
+// Returns the parsed sections, or null if the model produced nothing.
+async function streamStructured(apiKey, { userText, image }) {
   let full = "";
   let receivedAny = false;
   for await (const delta of streamModel({
     apiKey,
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
     userText,
+    image,
   })) {
     if (!receivedAny) {
       // Swap the skeleton or counter for cards the moment the first token lands.
@@ -212,7 +265,7 @@ async function streamStructured(apiKey, userText) {
 // map-reduce that condenses each chunk in parallel, then structures the notes.
 async function summarizeText(apiKey, text) {
   if (estimateTokens(text) <= SINGLE_PASS_TOKEN_LIMIT) {
-    return streamStructured(apiKey, text);
+    return streamStructured(apiKey, { userText: text });
   }
 
   const chunks = chunkText(text);
@@ -233,7 +286,86 @@ async function summarizeText(apiKey, text) {
   const combined = notes
     .map((note, index) => `Section ${index + 1}:\n${note}`)
     .join("\n\n");
-  return streamStructured(apiKey, combined);
+  return streamStructured(apiKey, { userText: combined });
+}
+
+// Store the finished summary for export and reveal the export buttons.
+function finalizeSummary(sections, title, url) {
+  if (!sections) {
+    showError({
+      code: "MODEL_DECLINED",
+      message: "The model returned no summary.",
+    });
+    return;
+  }
+  lastSummary = { title, url, sections };
+  show(copyButton, downloadButton);
+}
+
+async function summarizePage(apiKey, tab) {
+  const page = await extractPage(tab.id);
+  const readableChars = page?.text?.trim().length ?? 0;
+  if (readableChars < MIN_TEXT_CHARS) {
+    showError({
+      code: "NO_TEXT",
+      message:
+        `Only ${readableChars} characters of readable text found. This page ` +
+        "is likely canvas or image based.",
+    });
+    return;
+  }
+  setBadge(page.method);
+  const sections = await summarizeText(apiKey, page.text);
+  finalizeSummary(sections, page.title, page.url);
+}
+
+async function summarizeSelection(apiKey, tab) {
+  const text = await getSelectionText(tab.id);
+  if (!text.trim()) {
+    // A gentle prompt rather than an error: the user may have picked Selection
+    // mode before highlighting anything. They can select, then click Summarize.
+    showStatus("Select some text on the page, then click Summarize.");
+    return;
+  }
+  setBadge("selection");
+  const sections = await summarizeText(apiKey, text);
+  finalizeSummary(sections, tab.title, tab.url);
+}
+
+async function summarizeRegion(apiKey, tab) {
+  await injectContentScript(tab.id);
+  showStatus("Drag a rectangle on the page, or press Escape to cancel.");
+  const result = await chrome.tabs.sendMessage(tab.id, { type: "START_REGION" });
+
+  if (!result || result.cancelled) {
+    showEmptyState();
+    return;
+  }
+  if (!isValidRect(result.rect)) {
+    showError({
+      code: "REGION_TOO_SMALL",
+      message: "That region was too small. Drag a larger rectangle and retry.",
+    });
+    return;
+  }
+
+  showSkeleton();
+  const dataUrl = await chrome.runtime.sendMessage({
+    type: "CAPTURE_TAB",
+    windowId: tab.windowId,
+  });
+  if (!dataUrl) {
+    showError({ code: "NETWORK", message: "Could not capture the screen." });
+    return;
+  }
+
+  const image = await cropImage(dataUrl, result.rect, result.dpr);
+  setBadge("region");
+  const sections = await streamStructured(apiKey, {
+    userText: REGION_USER_PROMPT,
+    image,
+  });
+  finalizeSummary(sections, tab.title, tab.url);
 }
 
 async function summarizeTab(tabId) {
@@ -262,30 +394,13 @@ async function summarizeTab(tabId) {
       return;
     }
 
-    const page = await extractPage(tabId);
-    const readableChars = page?.text?.trim().length ?? 0;
-    if (readableChars < MIN_TEXT_CHARS) {
-      showError({
-        code: "NO_TEXT",
-        message:
-          `Only ${readableChars} characters of readable text found. This page ` +
-          "is likely canvas or image based.",
-      });
-      return;
+    if (captureMode === "selection") {
+      await summarizeSelection(apiKey, tab);
+    } else if (captureMode === "region") {
+      await summarizeRegion(apiKey, tab);
+    } else {
+      await summarizePage(apiKey, tab);
     }
-
-    setBadge(page.method);
-    const sections = await summarizeText(apiKey, page.text);
-    if (!sections) {
-      showError({
-        code: "MODEL_DECLINED",
-        message: "The model returned no summary for this page.",
-      });
-      return;
-    }
-
-    lastSummary = { title: page.title, url: page.url, sections };
-    show(copyButton, downloadButton);
   } catch (error) {
     // Log the real error so a generic NETWORK message can never hide an actual
     // code fault during development. A thrown provider error already carries a
@@ -356,6 +471,12 @@ document
 document.getElementById("summarize").addEventListener("click", reSummarize);
 copyButton.addEventListener("click", copySummary);
 downloadButton.addEventListener("click", downloadSummary);
+captureModeSelect.addEventListener("change", () => {
+  captureMode = captureModeSelect.value;
+  // Re-run in the new mode straight away, reusing the already-granted tab, so
+  // the user does not have to click the icon again after switching modes.
+  reSummarize();
+});
 
 // The background worker writes the tab to summarize into session storage when
 // the icon or shortcut is used. React to that write so invocation works whether

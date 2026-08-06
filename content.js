@@ -100,11 +100,88 @@ if (!window.__glanceListenerRegistered) {
     };
   }
 
+  // Draw a drag-to-select overlay above the page and resolve with the chosen
+  // rectangle in CSS pixels, plus the devicePixelRatio the screenshot will be
+  // captured at. Escape cancels. Coordinates are viewport-relative (clientX/Y)
+  // to match captureVisibleTab, which captures the visible viewport.
+  function startRegion() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.style.cssText =
+        "position:fixed;inset:0;z-index:2147483647;cursor:crosshair;" +
+        "background:rgba(0,0,0,0.25);";
+      const box = document.createElement("div");
+      box.style.cssText =
+        "position:fixed;border:2px solid #2563eb;background:rgba(37,99,235,0.15);" +
+        "display:none;pointer-events:none;";
+      overlay.append(box);
+      document.body.append(overlay);
+
+      let startX = 0;
+      let startY = 0;
+      let dragging = false;
+
+      const cleanup = () => {
+        overlay.remove();
+        document.removeEventListener("keydown", onKey, true);
+      };
+      const onKey = (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          cleanup();
+          resolve({ cancelled: true });
+        }
+      };
+
+      overlay.addEventListener("mousedown", (event) => {
+        dragging = true;
+        startX = event.clientX;
+        startY = event.clientY;
+        box.style.left = `${startX}px`;
+        box.style.top = `${startY}px`;
+        box.style.width = "0px";
+        box.style.height = "0px";
+        box.style.display = "block";
+      });
+      overlay.addEventListener("mousemove", (event) => {
+        if (!dragging) return;
+        const x = Math.min(startX, event.clientX);
+        const y = Math.min(startY, event.clientY);
+        box.style.left = `${x}px`;
+        box.style.top = `${y}px`;
+        box.style.width = `${Math.abs(event.clientX - startX)}px`;
+        box.style.height = `${Math.abs(event.clientY - startY)}px`;
+      });
+      overlay.addEventListener("mouseup", (event) => {
+        if (!dragging) return;
+        dragging = false;
+        const rect = {
+          x: startX,
+          y: startY,
+          width: event.clientX - startX,
+          height: event.clientY - startY,
+        };
+        cleanup();
+        resolve({ rect, dpr: window.devicePixelRatio || 1 });
+      });
+      document.addEventListener("keydown", onKey, true);
+    });
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.type !== "EXTRACT_PAGE") return;
-    // Extraction is async (it waits for the DOM to settle), so the listener must
-    // return true to keep the message port open until sendResponse is called.
-    extractPage().then(sendResponse);
-    return true;
+    if (message?.type === "EXTRACT_PAGE") {
+      // Extraction is async (it waits for the DOM to settle), so the listener
+      // must return true to keep the message port open until sendResponse runs.
+      extractPage().then(sendResponse);
+      return true;
+    }
+    if (message?.type === "GET_SELECTION") {
+      sendResponse({ text: window.getSelection().toString() });
+      return;
+    }
+    if (message?.type === "START_REGION") {
+      startRegion().then(sendResponse);
+      return true;
+    }
   });
 }

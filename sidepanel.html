@@ -29,6 +29,17 @@
         </div>
       </header>
 
+      <!-- Capture mode: whole page, the current selection, or a dragged
+           region. Chosen before invoking with the icon or shortcut. -->
+      <div id="capture-bar">
+        <label for="capture-mode">Capture</label>
+        <select id="capture-mode">
+          <option value="page">Whole page</option>
+          <option value="selection">Selection</option>
+          <option value="region">Region</option>
+        </select>
+      </div>
+
       <!-- Body: skeleton while loading, then the section cards, or an error
            with a reason. Exactly one group is visible at a time. -->
       <main id="panel-body">
