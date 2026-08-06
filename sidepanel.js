@@ -2,14 +2,16 @@
 // streaming. Requests originate here, not in the service worker, so the fetch
 // response streams directly into the DOM (D4).
 
-import { getApiKey } from "./lib/storage.js";
+import { getApiKey, getLanguage, setLanguage } from "./lib/storage.js";
 import { streamModel } from "./lib/providers/index.js";
+import { selectMode, MODE_LABELS } from "./lib/modes.js";
 import {
   SUMMARY_SYSTEM_PROMPT,
   CHUNK_MAP_PROMPT,
   REGION_USER_PROMPT,
   VISION_SYSTEM_PROMPT,
   FOLLOWUP_SYSTEM_PROMPT,
+  composeSystemPrompt,
 } from "./lib/prompts.js";
 import { estimateTokens, chunkText } from "./lib/chunk.js";
 import { sourceRect, isValidRect } from "./lib/crop.js";
@@ -29,7 +31,10 @@ import {
 const SINGLE_PASS_TOKEN_LIMIT = 6000;
 
 const captureModeSelect = document.getElementById("capture-mode");
+const languageSelect = document.getElementById("language");
+const domainModeSelect = document.getElementById("domain-mode");
 const emptyState = document.getElementById("empty-state");
+const modeBadge = document.getElementById("mode-badge");
 const methodBadge = document.getElementById("method-badge");
 const counter = document.getElementById("counter");
 const skeleton = document.getElementById("skeleton");
@@ -56,6 +61,9 @@ let capturedContext = null;
 let history = [];
 // The selected capture mode: "page", "selection" or "region".
 let captureMode = captureModeSelect.value;
+// Output language code and the domain-mode override ("auto" resolves per URL).
+let language = "en";
+let modeOverride = domainModeSelect.value;
 
 // Build one card per section once, and keep a handle to each body element so
 // streaming updates only touch text, never rebuild the DOM.
@@ -121,13 +129,24 @@ function renderCards(sections, { final } = { final: false }) {
 }
 
 function showSkeleton() {
-  hide(emptyState, cards, errorBox, counter, methodBadge, copyButton, downloadButton);
+  hide(emptyState, cards, errorBox, counter, methodBadge, modeBadge, copyButton, downloadButton);
   show(skeleton);
 }
 
 function showEmptyState() {
-  hide(skeleton, cards, errorBox, counter, methodBadge, copyButton, downloadButton);
+  hide(skeleton, cards, errorBox, counter, methodBadge, modeBadge, copyButton, downloadButton);
   show(emptyState);
+}
+
+// Show the domain mode that shaped the summary, as a header badge.
+function setModeBadge(modeKey) {
+  modeBadge.textContent = MODE_LABELS[modeKey] || modeKey;
+  show(modeBadge);
+}
+
+// Resolve the effective mode: the manual override, or auto-detected from URL.
+function effectiveMode(rawUrl) {
+  return modeOverride === "auto" ? selectMode(rawUrl) : modeOverride;
 }
 
 // Name the capture or extraction method that produced the summary, as a badge.
@@ -145,7 +164,7 @@ function setBadge(method) {
 // A one-line status in place of the cards: drag prompts, section progress, etc.
 function showStatus(message) {
   counter.textContent = message;
-  hide(emptyState, skeleton, cards, errorBox, methodBadge, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, errorBox, methodBadge, modeBadge, copyButton, downloadButton);
   show(counter);
 }
 
@@ -155,7 +174,7 @@ function showCounter(done, total) {
 }
 
 function showError({ code, message }, action) {
-  hide(emptyState, skeleton, cards, counter, methodBadge, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, counter, methodBadge, modeBadge, copyButton, downloadButton);
   errorTitle.textContent = titleFor(code);
   errorMessage.textContent = message || messageFor(code);
   errorCode.textContent = code;
@@ -243,9 +262,9 @@ async function streamStructured(
 
 // Summarize extracted text: one streamed pass when it fits, otherwise a
 // map-reduce that condenses each chunk in parallel, then structures the notes.
-async function summarizeText(apiKey, text) {
+async function summarizeText(apiKey, text, systemPrompt) {
   if (estimateTokens(text) <= SINGLE_PASS_TOKEN_LIMIT) {
-    return streamStructured(apiKey, { userText: text });
+    return streamStructured(apiKey, { userText: text, systemPrompt });
   }
 
   const chunks = chunkText(text);
@@ -266,7 +285,7 @@ async function summarizeText(apiKey, text) {
   const combined = notes
     .map((note, index) => `Section ${index + 1}:\n${note}`)
     .join("\n\n");
-  return streamStructured(apiKey, { userText: combined });
+  return streamStructured(apiKey, { userText: combined, systemPrompt });
 }
 
 // Set what follow-up questions are answered against, reset the conversation for
@@ -310,7 +329,9 @@ async function askFollowup(question) {
     let full = "";
     for await (const delta of streamModel({
       apiKey,
-      systemPrompt: FOLLOWUP_SYSTEM_PROMPT,
+      systemPrompt: composeSystemPrompt(FOLLOWUP_SYSTEM_PROMPT, {
+        langCode: language,
+      }),
       contents,
     })) {
       full += delta;
@@ -350,9 +371,15 @@ async function summarizePage(apiKey, tab) {
     });
     return;
   }
+  const mode = effectiveMode(tab.url ?? "");
+  setModeBadge(mode);
   setBadge(page.method);
   setContext({ text: page.text, title: page.title, url: page.url });
-  const sections = await summarizeText(apiKey, page.text);
+  const systemPrompt = composeSystemPrompt(SUMMARY_SYSTEM_PROMPT, {
+    modeKey: mode,
+    langCode: language,
+  });
+  const sections = await summarizeText(apiKey, page.text, systemPrompt);
   finalizeSummary(sections, page.title, page.url);
 }
 
@@ -382,7 +409,9 @@ async function summarizeVisibleTab(tab) {
     const sections = await streamStructured(apiKey, {
       userText: REGION_USER_PROMPT,
       image,
-      systemPrompt: VISION_SYSTEM_PROMPT,
+      systemPrompt: composeSystemPrompt(VISION_SYSTEM_PROMPT, {
+        langCode: language,
+      }),
     });
     finalizeSummary(sections, tab.title, tab.url);
   } catch (error) {
@@ -401,9 +430,15 @@ async function summarizeSelection(apiKey, tab) {
     showStatus("Select some text on the page, then click Summarize.");
     return;
   }
+  const mode = effectiveMode(tab.url ?? "");
+  setModeBadge(mode);
   setBadge("selection");
   setContext({ text, title: tab.title, url: tab.url });
-  const sections = await summarizeText(apiKey, text);
+  const systemPrompt = composeSystemPrompt(SUMMARY_SYSTEM_PROMPT, {
+    modeKey: mode,
+    langCode: language,
+  });
+  const sections = await summarizeText(apiKey, text, systemPrompt);
   finalizeSummary(sections, tab.title, tab.url);
 }
 
@@ -549,6 +584,23 @@ captureModeSelect.addEventListener("change", () => {
   // Re-run in the new mode straight away, reusing the already-granted tab, so
   // the user does not have to click the icon again after switching modes.
   reSummarize();
+});
+
+languageSelect.addEventListener("change", () => {
+  language = languageSelect.value;
+  setLanguage(language);
+  reSummarize();
+});
+
+domainModeSelect.addEventListener("change", () => {
+  modeOverride = domainModeSelect.value;
+  reSummarize();
+});
+
+// Restore the saved output language so it persists across sessions.
+getLanguage().then((saved) => {
+  language = saved;
+  languageSelect.value = saved;
 });
 
 // Enter sends a follow-up; the answer streams into the transcript with no

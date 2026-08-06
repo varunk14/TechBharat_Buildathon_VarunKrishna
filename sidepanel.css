@@ -36,7 +36,11 @@ body {
 }
 
 body {
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Indic families are named so Telugu, Devanagari, Tamil and Bengali output
+     renders with real glyphs rather than tofu boxes on any platform. */
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans",
+    "Noto Sans Telugu", "Noto Sans Devanagari", "Noto Sans Tamil",
+    "Noto Sans Bengali", sans-serif;
   color: var(--fg);
   background: var(--bg);
 }
@@ -81,15 +85,16 @@ body {
 
 #capture-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   color: var(--muted);
 }
 
-#capture-mode {
+#capture-bar select {
   font: inherit;
   color: var(--fg);
   background: var(--bg);

@@ -13,6 +13,7 @@
       <header id="panel-header">
         <div class="title-row">
           <h1 id="panel-title">Glance</h1>
+          <span id="mode-badge" class="badge" hidden></span>
           <span id="method-badge" class="badge" hidden></span>
         </div>
         <div class="header-actions">
@@ -37,6 +38,28 @@
           <option value="page">Whole page</option>
           <option value="selection">Selection</option>
           <option value="region">Region</option>
+        </select>
+
+        <label for="language">Language</label>
+        <select id="language">
+          <option value="en">English</option>
+          <option value="hi">Hindi</option>
+          <option value="te">Telugu</option>
+          <option value="ta">Tamil</option>
+          <option value="bn">Bengali</option>
+          <option value="mr">Marathi</option>
+        </select>
+
+        <label for="domain-mode">Mode</label>
+        <select id="domain-mode">
+          <option value="auto">Auto</option>
+          <option value="github-pr">GitHub PR</option>
+          <option value="gmail">Email</option>
+          <option value="jira">Jira</option>
+          <option value="paper">Paper</option>
+          <option value="docs">Docs</option>
+          <option value="news">News</option>
+          <option value="generic">General</option>
         </select>
       </div>
 
