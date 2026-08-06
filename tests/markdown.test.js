@@ -71,6 +71,17 @@ describe("extractQuote", () => {
       quote: null,
     });
   });
+
+  it("handles punctuation after the marker and markers mid-sentence", () => {
+    expect(extractQuote("The test succeeded [[test was successful]].")).toEqual({
+      text: "The test succeeded.",
+      quote: "test was successful",
+    });
+    expect(extractQuote("A [[quoted bit]] inside a sentence.")).toEqual({
+      text: "A inside a sentence.",
+      quote: "quoted bit",
+    });
+  });
 });
 
 describe("stripQuotes", () => {
