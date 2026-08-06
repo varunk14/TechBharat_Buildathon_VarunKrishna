@@ -13,6 +13,10 @@
       <header id="panel-header">
         <h1 id="panel-title">Glance</h1>
         <div class="header-actions">
+          <button id="copy" type="button" class="link-button" hidden>Copy</button>
+          <button id="download" type="button" class="link-button" hidden>
+            Download
+          </button>
           <button id="summarize" type="button" class="link-button">
             Summarize
           </button>
@@ -22,8 +26,8 @@
         </div>
       </header>
 
-      <!-- Body: skeleton while loading, then the streamed summary, or an
-           error with a reason. Exactly one is visible at a time. -->
+      <!-- Body: skeleton while loading, then the section cards, or an error
+           with a reason. Exactly one group is visible at a time. -->
       <main id="panel-body">
         <div id="skeleton" hidden aria-hidden="true">
           <div class="sk-line"></div>
@@ -33,7 +37,7 @@
           <div class="sk-line short"></div>
         </div>
 
-        <pre id="summary-output" class="summary" hidden></pre>
+        <div id="cards" hidden></div>
 
         <div id="error" class="error" role="alert" hidden>
           <p id="error-message"></p>

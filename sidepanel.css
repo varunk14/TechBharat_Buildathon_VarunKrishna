@@ -82,11 +82,39 @@ body {
   gap: 12px;
 }
 
-.summary {
-  margin: 0;
+#cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.card-body {
   white-space: pre-wrap;
   word-break: break-word;
-  font: inherit;
+}
+
+.card-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.card-body li {
+  margin-bottom: 4px;
 }
 
 .error {
