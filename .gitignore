@@ -9,13 +9,6 @@ node_modules/
 secrets.json
 config.local.js
 
-# internal working documents - not part of the shipped project
-CLAUDE.md
-PRD.md
-progress.txt
-docs/TESTING.md
-notes/
-scratch/
 
 # build and test output
 dist/
