@@ -2,6 +2,10 @@
 
 A Chrome extension that summarizes whatever is on screen, in place, without leaving the tab. One keyboard shortcut turns a long article, pull request, dashboard or paper into a two-line summary, key points, extracted numbers and action items.
 
+![Glance summarizing a blog post, a Telugu news site and a research PDF, then failing honestly on a browser page](assets/demo.gif)
+
+*One shortcut on a blog post, a Telugu news homepage and a 15-page research PDF — and an honest error on a page no extension is allowed to read.*
+
 
 ## Why
 
