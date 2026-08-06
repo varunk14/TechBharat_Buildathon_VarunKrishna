@@ -291,7 +291,11 @@ async function summarizeTab(tabId) {
     // code fault during development. A thrown provider error already carries a
     // typed code; anything else is treated as a network failure rather than
     // shown to the user as a raw exception.
-    console.error("Summarize failed", error);
+    console.error(
+      "Summarize failed:",
+      error?.code || "",
+      error?.message || error?.stack || error
+    );
     const typed = error?.code
       ? error
       : {
