@@ -53,4 +53,15 @@ describe("buildRequestBody", () => {
       },
     });
   });
+
+  it("places the image part before the text part for a vision request", () => {
+    const body = buildRequestBody({
+      systemPrompt: "sys",
+      userText: "describe this",
+      image: { mimeType: "image/png", data: "AAEC" },
+    });
+    const parts = body.contents[0].parts;
+    expect(parts[0].inline_data).toEqual({ mime_type: "image/png", data: "AAEC" });
+    expect(parts[1]).toEqual({ text: "describe this" });
+  });
 });

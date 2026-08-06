@@ -54,4 +54,10 @@ describe("textError", () => {
     expect(textError(50).message).toContain("50 characters");
     expect(textError(300)).toBeNull();
   });
+
+  it("triggers the vision offer exactly at the 200-character boundary", () => {
+    // Under 200 offers the visual fallback; 200 and above summarize as text.
+    expect(textError(199).code).toBe("NO_TEXT");
+    expect(textError(200)).toBeNull();
+  });
 });

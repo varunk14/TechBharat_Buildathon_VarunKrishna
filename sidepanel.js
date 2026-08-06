@@ -8,10 +8,12 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   CHUNK_MAP_PROMPT,
   REGION_USER_PROMPT,
+  VISION_SYSTEM_PROMPT,
   FOLLOWUP_SYSTEM_PROMPT,
 } from "./lib/prompts.js";
 import { estimateTokens, chunkText } from "./lib/chunk.js";
 import { sourceRect, isValidRect } from "./lib/crop.js";
+import { bytesToBase64 } from "./lib/image.js";
 import { buildMessages } from "./lib/conversation.js";
 import { preflight, textError, titleFor, messageFor } from "./lib/errors.js";
 import {
@@ -198,18 +200,8 @@ async function cropImage(dataUrl, rect, dpr) {
   const context = canvas.getContext("2d");
   context.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
   const cropped = await canvas.convertToBlob({ type: "image/png" });
-  const data = await blobToBase64(cropped);
-  return { mimeType: "image/png", data };
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    // Strip the "data:image/png;base64," prefix; the API wants raw base64.
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const bytes = new Uint8Array(await cropped.arrayBuffer());
+  return { mimeType: "image/png", data: bytesToBase64(bytes) };
 }
 
 // Collect a full model response without rendering, for the map step.
@@ -221,12 +213,15 @@ async function collectModel(args) {
 
 // Stream a structured summary into the cards. Accepts text and/or an image.
 // Returns the parsed sections, or null if the model produced nothing.
-async function streamStructured(apiKey, { userText, image }) {
+async function streamStructured(
+  apiKey,
+  { userText, image, systemPrompt = SUMMARY_SYSTEM_PROMPT }
+) {
   let full = "";
   let receivedAny = false;
   for await (const delta of streamModel({
     apiKey,
-    systemPrompt: SUMMARY_SYSTEM_PROMPT,
+    systemPrompt,
     userText,
     image,
   })) {
@@ -387,6 +382,7 @@ async function summarizeVisibleTab(tab) {
     const sections = await streamStructured(apiKey, {
       userText: REGION_USER_PROMPT,
       image,
+      systemPrompt: VISION_SYSTEM_PROMPT,
     });
     finalizeSummary(sections, tab.title, tab.url);
   } catch (error) {
