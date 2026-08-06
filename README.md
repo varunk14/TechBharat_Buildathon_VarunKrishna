@@ -92,7 +92,7 @@ Bundled directly rather than installed, since the extension ships without depend
 
 | File | Source | Version |
 |---|---|---|
-| `vendor/Readability.js` | https://github.com/mozilla/readability | fill in |
+| `vendor/Readability.js` | https://github.com/mozilla/readability | 0.5.0 |
 | `vendor/pdf.mjs` | https://github.com/mozilla/pdf.js | fill in |
 | `vendor/pdf.worker.mjs` | https://github.com/mozilla/pdf.js | fill in |
 

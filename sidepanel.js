@@ -4,7 +4,8 @@
 
 import { getApiKey } from "./lib/storage.js";
 import { streamModel } from "./lib/providers/index.js";
-import { SUMMARY_SYSTEM_PROMPT } from "./lib/prompts.js";
+import { SUMMARY_SYSTEM_PROMPT, CHUNK_MAP_PROMPT } from "./lib/prompts.js";
+import { estimateTokens, chunkText } from "./lib/chunk.js";
 import {
   SECTIONS,
   parseSections,
@@ -13,7 +14,15 @@ import {
   safeFilename,
 } from "./lib/markdown.js";
 
+// Below this many estimated tokens a page is summarized in one request; above
+// it, the page is chunked and summarized map-reduce to stay within budget.
+const SINGLE_PASS_TOKEN_LIMIT = 6000;
+// Minimum readable characters before a page counts as summarizable (PRD 7.8).
+const MIN_TEXT_CHARS = 200;
+
 const emptyState = document.getElementById("empty-state");
+const methodBadge = document.getElementById("method-badge");
+const counter = document.getElementById("counter");
 const skeleton = document.getElementById("skeleton");
 const cards = document.getElementById("cards");
 const errorBox = document.getElementById("error");
@@ -118,17 +127,31 @@ function renderCards(sections, { final } = { final: false }) {
 }
 
 function showSkeleton() {
-  hide(emptyState, cards, errorBox, copyButton, downloadButton);
+  hide(emptyState, cards, errorBox, counter, methodBadge, copyButton, downloadButton);
   show(skeleton);
 }
 
 function showEmptyState() {
-  hide(skeleton, cards, errorBox, copyButton, downloadButton);
+  hide(skeleton, cards, errorBox, counter, methodBadge, copyButton, downloadButton);
   show(emptyState);
 }
 
+// Name the extraction method that produced the text, as a header badge.
+function setBadge(method) {
+  const labels = { readability: "Readability", heuristic: "Heuristic" };
+  methodBadge.textContent = labels[method] || method;
+  show(methodBadge);
+}
+
+// Long pages are read section by section; show progress in place of tokens.
+function showCounter(done, total) {
+  counter.textContent = `Reading section ${done} of ${total}`;
+  hide(skeleton);
+  show(counter);
+}
+
 function showError({ code, message }, action) {
-  hide(emptyState, skeleton, cards, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, counter, methodBadge, copyButton, downloadButton);
   errorMessage.textContent = message;
   errorCode.textContent = code;
   if (action) {
@@ -141,24 +164,37 @@ function showError({ code, message }, action) {
   show(errorBox);
 }
 
-// Inject the content script on demand and ask it for the page text. The script
-// guards against double-registration, so re-injecting on each run is safe.
+// Inject the extraction code on demand and ask it for the page text. Readability
+// and lib/extract.js load first so the content script can use them; all three
+// guard against re-running, so re-injecting on each run is safe.
 async function extractPage(tabId) {
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["vendor/Readability.js", "lib/extract.js", "content.js"],
+  });
   return chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PAGE" });
 }
 
-async function streamSummary(apiKey, page) {
+// Collect a full model response without rendering, for the map step.
+async function collectModel(args) {
+  let full = "";
+  for await (const delta of streamModel(args)) full += delta;
+  return full;
+}
+
+// Stream a structured summary into the cards. Returns the parsed sections, or
+// null if the model produced nothing.
+async function streamStructured(apiKey, userText) {
   let full = "";
   let receivedAny = false;
   for await (const delta of streamModel({
     apiKey,
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
-    userText: page.text,
+    userText,
   })) {
     if (!receivedAny) {
-      // Swap the skeleton for cards the moment the first token lands.
-      hide(skeleton);
+      // Swap the skeleton or counter for cards the moment the first token lands.
+      hide(skeleton, counter);
       show(cards);
       receivedAny = true;
     }
@@ -166,18 +202,38 @@ async function streamSummary(apiKey, page) {
     renderCards(parseSections(full));
   }
 
-  if (!receivedAny) {
-    showError({
-      code: "MODEL_DECLINED",
-      message: "The model returned no summary for this page.",
-    });
-    return;
-  }
-
+  if (!receivedAny) return null;
   const sections = parseSections(full);
   renderCards(sections, { final: true });
-  lastSummary = { title: page.title, url: page.url, sections };
-  show(copyButton, downloadButton);
+  return sections;
+}
+
+// Summarize extracted text: one streamed pass when it fits, otherwise a
+// map-reduce that condenses each chunk in parallel, then structures the notes.
+async function summarizeText(apiKey, text) {
+  if (estimateTokens(text) <= SINGLE_PASS_TOKEN_LIMIT) {
+    return streamStructured(apiKey, text);
+  }
+
+  const chunks = chunkText(text);
+  let done = 0;
+  showCounter(done, chunks.length);
+  const notes = await Promise.all(
+    chunks.map((chunk) =>
+      collectModel({ apiKey, systemPrompt: CHUNK_MAP_PROMPT, userText: chunk }).then(
+        (note) => {
+          done += 1;
+          showCounter(done, chunks.length);
+          return note;
+        }
+      )
+    )
+  );
+
+  const combined = notes
+    .map((note, index) => `Section ${index + 1}:\n${note}`)
+    .join("\n\n");
+  return streamStructured(apiKey, combined);
 }
 
 async function summarizeTab(tabId) {
@@ -207,16 +263,29 @@ async function summarizeTab(tabId) {
     }
 
     const page = await extractPage(tabId);
-    if (!page?.text?.trim()) {
+    const readableChars = page?.text?.trim().length ?? 0;
+    if (readableChars < MIN_TEXT_CHARS) {
       showError({
         code: "NO_TEXT",
         message:
-          "No readable text found on this page. It is likely canvas or image based.",
+          `Only ${readableChars} characters of readable text found. This page ` +
+          "is likely canvas or image based.",
       });
       return;
     }
 
-    await streamSummary(apiKey, page);
+    setBadge(page.method);
+    const sections = await summarizeText(apiKey, page.text);
+    if (!sections) {
+      showError({
+        code: "MODEL_DECLINED",
+        message: "The model returned no summary for this page.",
+      });
+      return;
+    }
+
+    lastSummary = { title: page.title, url: page.url, sections };
+    show(copyButton, downloadButton);
   } catch (error) {
     // Log the real error so a generic NETWORK message can never hide an actual
     // code fault during development. A thrown provider error already carries a
