@@ -47,7 +47,10 @@ describe("buildRequestBody", () => {
     expect(body).toEqual({
       system_instruction: { parts: [{ text: "sys" }] },
       contents: [{ role: "user", parts: [{ text: "page text" }] }],
-      generationConfig: { maxOutputTokens: 1500 },
+      generationConfig: {
+        maxOutputTokens: 1500,
+        thinkingConfig: { thinkingLevel: "low" },
+      },
     });
   });
 });
