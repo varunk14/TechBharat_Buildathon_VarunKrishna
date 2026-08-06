@@ -7,8 +7,35 @@
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
-    <!-- MVP 0 scaffold: API key entry and language preference added in MVP 1. -->
-    <main id="options"></main>
+    <main id="options">
+      <h1>Glance settings</h1>
+
+      <form id="key-form">
+        <label for="api-key">Google AI Studio API key</label>
+        <p class="help">
+          Stored only on this device, in the browser's local extension storage.
+          It is sent only to the model API and never committed anywhere.
+        </p>
+        <div class="row">
+          <input
+            id="api-key"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Paste your API key"
+          />
+          <button id="toggle-visibility" type="button" class="secondary">
+            Show
+          </button>
+        </div>
+        <div class="actions">
+          <button id="save" type="submit">Save</button>
+          <button id="delete" type="button" class="danger">Delete key</button>
+        </div>
+      </form>
+
+      <p id="status" role="status" aria-live="polite" class="status"></p>
+    </main>
     <script type="module" src="options.js"></script>
   </body>
 </html>

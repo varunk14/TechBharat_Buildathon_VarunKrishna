@@ -7,8 +7,34 @@
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
-    <!-- MVP 0 scaffold: header, body and footer regions are added in MVP 1. -->
-    <main id="app"></main>
+    <div id="panel">
+      <!-- Header: title now; capture-mode and extraction-method controls land
+           in MVP 4 and MVP 5. -->
+      <header id="panel-header">
+        <h1 id="panel-title">Glance</h1>
+        <button id="open-settings" type="button" class="link-button">
+          Settings
+        </button>
+      </header>
+
+      <!-- Body: where summaries and errors render. Empty state for now. -->
+      <main id="panel-body">
+        <p id="empty-state" class="muted">
+          Press <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, or click the
+          toolbar icon, to summarize the current page.
+        </p>
+      </main>
+
+      <!-- Footer: the follow-up question input arrives in MVP 6. -->
+      <footer id="panel-footer">
+        <input
+          id="followup-input"
+          type="text"
+          placeholder="Ask a follow-up (coming soon)"
+          disabled
+        />
+      </footer>
+    </div>
     <script type="module" src="sidepanel.js"></script>
   </body>
 </html>
