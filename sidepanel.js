@@ -13,6 +13,7 @@ import {
   safeFilename,
 } from "./lib/markdown.js";
 
+const emptyState = document.getElementById("empty-state");
 const skeleton = document.getElementById("skeleton");
 const cards = document.getElementById("cards");
 const errorBox = document.getElementById("error");
@@ -24,6 +25,10 @@ const downloadButton = document.getElementById("download");
 
 // The most recent completed summary, held for copy and download.
 let lastSummary = null;
+// The last tab summarized, so the in-panel Summarize button can re-run it.
+let lastTabId = null;
+// Guards against two triggers (on-load read and wake message) racing.
+let running = false;
 
 // Build one card per section once, and keep a handle to each body element so
 // streaming updates only touch text, never rebuild the DOM.
@@ -113,12 +118,17 @@ function renderCards(sections, { final } = { final: false }) {
 }
 
 function showSkeleton() {
-  hide(cards, errorBox, copyButton, downloadButton);
+  hide(emptyState, cards, errorBox, copyButton, downloadButton);
   show(skeleton);
 }
 
+function showEmptyState() {
+  hide(skeleton, cards, errorBox, copyButton, downloadButton);
+  show(emptyState);
+}
+
 function showError({ code, message }, action) {
-  hide(skeleton, cards, copyButton, downloadButton);
+  hide(emptyState, skeleton, cards, copyButton, downloadButton);
   errorMessage.textContent = message;
   errorCode.textContent = code;
   if (action) {
@@ -129,11 +139,6 @@ function showError({ code, message }, action) {
     hide(errorAction);
   }
   show(errorBox);
-}
-
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
 }
 
 // Inject the content script on demand and ask it for the page text. The script
@@ -175,17 +180,16 @@ async function streamSummary(apiKey, page) {
   show(copyButton, downloadButton);
 }
 
-async function summarize() {
+async function summarizeTab(tabId) {
+  if (running) return;
+  running = true;
   // Paint the skeleton before any async work so it is visible within the 100ms
   // budget, ahead of the network round-trip.
   showSkeleton();
 
   try {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      showError({ code: "NO_TAB", message: "No active tab to summarize." });
-      return;
-    }
+    const tab = await chrome.tabs.get(tabId);
+    lastTabId = tabId;
 
     const restriction = preflightError(tab.url ?? "");
     if (restriction) {
@@ -202,7 +206,7 @@ async function summarize() {
       return;
     }
 
-    const page = await extractPage(tab.id);
+    const page = await extractPage(tabId);
     if (!page?.text?.trim()) {
       showError({
         code: "NO_TEXT",
@@ -214,8 +218,11 @@ async function summarize() {
 
     await streamSummary(apiKey, page);
   } catch (error) {
-    // A thrown provider error already carries a typed code; anything else is
-    // treated as a network failure rather than shown as a raw exception.
+    // Log the real error so a generic NETWORK message can never hide an actual
+    // code fault during development. A thrown provider error already carries a
+    // typed code; anything else is treated as a network failure rather than
+    // shown to the user as a raw exception.
+    console.error("Summarize failed", error);
     const typed = error?.code
       ? error
       : {
@@ -223,7 +230,28 @@ async function summarize() {
           message: "Could not reach the API. Check your internet connection.",
         };
     showError(typed);
+  } finally {
+    running = false;
   }
+}
+
+// The background worker stashes the tab to summarize when the icon or shortcut
+// is used, because only that gesture grants activeTab access to the page. Read
+// and clear it, then summarize that exact tab.
+async function runRequestedSummary() {
+  const { summarizeTabId } = await chrome.storage.session.get("summarizeTabId");
+  if (summarizeTabId == null) {
+    if (!lastSummary) showEmptyState();
+    return;
+  }
+  await chrome.storage.session.remove("summarizeTabId");
+  summarizeTab(summarizeTabId);
+}
+
+// Re-run for whichever tab the panel last summarized. Only reliable while the
+// activeTab grant on that tab still holds (same tab, not navigated away).
+function reSummarize() {
+  if (lastTabId != null) summarizeTab(lastTabId);
 }
 
 function currentMarkdown() {
@@ -252,9 +280,18 @@ function downloadSummary() {
 document
   .getElementById("open-settings")
   .addEventListener("click", () => chrome.runtime.openOptionsPage());
-document.getElementById("summarize").addEventListener("click", summarize);
+document.getElementById("summarize").addEventListener("click", reSummarize);
 copyButton.addEventListener("click", copySummary);
 downloadButton.addEventListener("click", downloadSummary);
 
-// Summarize the active page as soon as the panel opens.
-summarize();
+// The background worker writes the tab to summarize into session storage when
+// the icon or shortcut is used. React to that write so invocation works whether
+// the panel was already open or just opened; the newValue guard ignores the
+// removal we do after reading it.
+chrome.storage.session.onChanged.addListener((changes) => {
+  if (changes.summarizeTabId?.newValue != null) runRequestedSummary();
+});
+
+// Also check once on load, in case the tab id was written before this panel
+// finished loading and its onChanged listener was attached.
+runRequestedSummary();

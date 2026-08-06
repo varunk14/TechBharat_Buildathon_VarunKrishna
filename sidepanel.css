@@ -23,6 +23,12 @@
   box-sizing: border-box;
 }
 
+/* The hidden attribute must always win. Without this, the explicit display on
+   #skeleton and #cards below would override it and leave hidden groups visible. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
