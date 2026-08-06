@@ -203,6 +203,12 @@ body {
   border-radius: 8px;
 }
 
+.error h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .error p {
   margin: 0 0 6px;
 }

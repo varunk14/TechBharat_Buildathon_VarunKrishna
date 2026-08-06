@@ -13,6 +13,7 @@ import {
 import { estimateTokens, chunkText } from "./lib/chunk.js";
 import { sourceRect, isValidRect } from "./lib/crop.js";
 import { buildMessages } from "./lib/conversation.js";
+import { preflight, textError, titleFor, messageFor } from "./lib/errors.js";
 import {
   SECTIONS,
   parseSections,
@@ -24,8 +25,6 @@ import {
 // Below this many estimated tokens a page is summarized in one request; above
 // it, the page is chunked and summarized map-reduce to stay within budget.
 const SINGLE_PASS_TOKEN_LIMIT = 6000;
-// Minimum readable characters before a page counts as summarizable (PRD 7.8).
-const MIN_TEXT_CHARS = 200;
 
 const captureModeSelect = document.getElementById("capture-mode");
 const emptyState = document.getElementById("empty-state");
@@ -34,6 +33,7 @@ const counter = document.getElementById("counter");
 const skeleton = document.getElementById("skeleton");
 const cards = document.getElementById("cards");
 const errorBox = document.getElementById("error");
+const errorTitle = document.getElementById("error-title");
 const errorMessage = document.getElementById("error-message");
 const errorCode = document.getElementById("error-code");
 const errorAction = document.getElementById("error-action");
@@ -68,30 +68,6 @@ for (const name of SECTIONS) {
   card.append(heading, body);
   cards.append(card);
   cardBodies.set(name, body);
-}
-
-// Minimal URL classification for MVP 2. The full table from PRD 7.8, with unit
-// tests, is built in MVP 7.
-function preflightError(rawUrl) {
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return { code: "NOT_WEB", message: "This page cannot be summarized." };
-  }
-  if (url.protocol === "http:" || url.protocol === "https:") return null;
-  if (["chrome:", "edge:", "about:", "devtools:"].includes(url.protocol)) {
-    return {
-      code: "RESTRICTED_SCHEME",
-      message:
-        "Chrome blocks all extensions from reading internal browser pages. " +
-        "This is a browser security rule, not a limitation of this extension.",
-    };
-  }
-  return {
-    code: "NOT_WEB",
-    message: "This extension only works on http and https pages.",
-  };
 }
 
 function show(element) {
@@ -178,7 +154,8 @@ function showCounter(done, total) {
 
 function showError({ code, message }, action) {
   hide(emptyState, skeleton, cards, counter, methodBadge, copyButton, downloadButton);
-  errorMessage.textContent = message;
+  errorTitle.textContent = titleFor(code);
+  errorMessage.textContent = message || messageFor(code);
   errorCode.textContent = code;
   if (action) {
     errorAction.textContent = action.label;
@@ -369,12 +346,12 @@ function finalizeSummary(sections, title, url) {
 async function summarizePage(apiKey, tab) {
   const page = await extractPage(tab.id);
   const readableChars = page?.text?.trim().length ?? 0;
-  if (readableChars < MIN_TEXT_CHARS) {
-    showError({
-      code: "NO_TEXT",
-      message:
-        `Only ${readableChars} characters of readable text found. This page ` +
-        "is likely canvas or image based.",
+  const thin = textError(readableChars);
+  if (thin) {
+    // Offer the visual route: screenshot the page and summarize it as an image.
+    showError(thin, {
+      label: "Summarize visually",
+      onClick: () => summarizeVisibleTab(tab),
     });
     return;
   }
@@ -382,6 +359,42 @@ async function summarizePage(apiKey, tab) {
   setContext({ text: page.text, title: page.title, url: page.url });
   const sections = await summarizeText(apiKey, page.text);
   finalizeSummary(sections, page.title, page.url);
+}
+
+// Capture the whole visible tab and summarize it as an image. Used as the
+// "summarize visually" fallback for canvas or image-only pages.
+async function summarizeVisibleTab(tab) {
+  if (running) return;
+  running = true;
+  showSkeleton();
+  try {
+    const apiKey = await getApiKey();
+    if (!apiKey) {
+      showError({ code: "NO_KEY", message: messageFor("NO_KEY") });
+      return;
+    }
+    const dataUrl = await chrome.runtime.sendMessage({
+      type: "CAPTURE_TAB",
+      windowId: tab.windowId,
+    });
+    if (!dataUrl) {
+      showError({ code: "NETWORK", message: "Could not capture the screen." });
+      return;
+    }
+    const image = { mimeType: "image/png", data: dataUrl.split(",")[1] };
+    setBadge("region");
+    setContext({ image, text: "", title: tab.title, url: tab.url });
+    const sections = await streamStructured(apiKey, {
+      userText: REGION_USER_PROMPT,
+      image,
+    });
+    finalizeSummary(sections, tab.title, tab.url);
+  } catch (error) {
+    console.error("Visual summary failed:", error?.code || "", error?.message || error);
+    showError(error?.code ? error : { code: "NETWORK", message: messageFor("NETWORK") });
+  } finally {
+    running = false;
+  }
 }
 
 async function summarizeSelection(apiKey, tab) {
@@ -446,7 +459,7 @@ async function summarizeTab(tabId) {
     const tab = await chrome.tabs.get(tabId);
     lastTabId = tabId;
 
-    const restriction = preflightError(tab.url ?? "");
+    const restriction = preflight(tab.url ?? "");
     if (restriction) {
       showError(restriction);
       return;
@@ -480,10 +493,7 @@ async function summarizeTab(tabId) {
     );
     const typed = error?.code
       ? error
-      : {
-          code: "NETWORK",
-          message: "Could not reach the API. Check your internet connection.",
-        };
+      : { code: "NETWORK", message: messageFor("NETWORK") };
     showError(typed);
   } finally {
     running = false;
