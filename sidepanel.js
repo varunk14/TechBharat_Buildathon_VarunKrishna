@@ -247,8 +247,12 @@ async function collectModel(args) {
 // Returns the parsed sections, or null if the model produced nothing.
 async function streamStructured(
   apiKey,
-  { userText, image, systemPrompt = SUMMARY_SYSTEM_PROMPT }
+  { userText, image, systemPrompt = SUMMARY_SYSTEM_PROMPT, maskOutput = false }
 ) {
+  // A screenshot cannot be text-redacted before upload, so for vision captures
+  // in privacy mode the model's OUTPUT is masked instead: identifiers the model
+  // read off the image never reach the cards, the export or the history.
+  const view = (text) => (maskOutput ? redact(text).text : text);
   let full = "";
   let receivedAny = false;
   for await (const delta of streamModel({
@@ -264,11 +268,16 @@ async function streamStructured(
       receivedAny = true;
     }
     full += delta;
-    renderCards(parseSections(full));
+    renderCards(parseSections(view(full)));
   }
 
   if (!receivedAny) return null;
-  const sections = parseSections(full);
+  if (maskOutput) {
+    const { count } = redact(full);
+    redactBadge.textContent = `${count} redacted`;
+    show(redactBadge);
+  }
+  const sections = parseSections(view(full));
   renderCards(sections, { final: true });
   return sections;
 }
@@ -490,6 +499,7 @@ async function visualSummarize(apiKey, tab) {
     userText: REGION_USER_PROMPT,
     image,
     systemPrompt: composeSystemPrompt(VISION_SYSTEM_PROMPT, { langCode: language }),
+    maskOutput: privacyMode,
   });
   finalizeSummary(sections, tab.title, tab.url);
 }
@@ -598,6 +608,8 @@ async function summarizeRegion(apiKey, tab) {
   const sections = await streamStructured(apiKey, {
     userText: REGION_USER_PROMPT,
     image,
+    systemPrompt: composeSystemPrompt(VISION_SYSTEM_PROMPT, { langCode: language }),
+    maskOutput: privacyMode,
   });
   finalizeSummary(sections, tab.title, tab.url);
 }

@@ -124,6 +124,7 @@ After editing `content.js`, reload the extension and refresh the target page.
 - Chrome blocks all extensions from reading internal browser pages (`chrome://`, the Web Store). Glance reports this rather than failing silently.
 - Cross-origin iframes cannot be read. This is a browser security boundary, not a bug.
 - Summary quality depends on the model and on how much readable structure the page exposes.
+- Privacy mode masks identifiers in text before it is sent. A region screenshot is an image, which cannot be text-masked before upload; there, identifiers are masked in the generated summary instead, so they never appear in the panel, the export or the history.
 
 ## Licence
 
