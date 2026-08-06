@@ -8,9 +8,11 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   CHUNK_MAP_PROMPT,
   REGION_USER_PROMPT,
+  FOLLOWUP_SYSTEM_PROMPT,
 } from "./lib/prompts.js";
 import { estimateTokens, chunkText } from "./lib/chunk.js";
 import { sourceRect, isValidRect } from "./lib/crop.js";
+import { buildMessages } from "./lib/conversation.js";
 import {
   SECTIONS,
   parseSections,
@@ -37,6 +39,8 @@ const errorCode = document.getElementById("error-code");
 const errorAction = document.getElementById("error-action");
 const copyButton = document.getElementById("copy");
 const downloadButton = document.getElementById("download");
+const transcript = document.getElementById("transcript");
+const followupInput = document.getElementById("followup-input");
 
 // The most recent completed summary, held for copy and download.
 let lastSummary = null;
@@ -44,6 +48,10 @@ let lastSummary = null;
 let lastTabId = null;
 // Guards against two triggers (on-load read and wake message) racing.
 let running = false;
+// The captured page text or image that follow-up questions are answered against.
+let capturedContext = null;
+// Follow-up conversation turns for the life of this panel session.
+let history = [];
 // The selected capture mode: "page", "selection" or "region".
 let captureMode = captureModeSelect.value;
 
@@ -289,6 +297,62 @@ async function summarizeText(apiKey, text) {
   return streamStructured(apiKey, { userText: combined });
 }
 
+// Set what follow-up questions are answered against, reset the conversation for
+// the new capture, and enable the input.
+function setContext(context) {
+  capturedContext = context;
+  history = [];
+  transcript.textContent = "";
+  followupInput.disabled = false;
+  followupInput.placeholder = "Ask a follow-up about this";
+}
+
+function appendBubble(role, text) {
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${role}`;
+  bubble.textContent = text;
+  transcript.append(bubble);
+  transcript.scrollTop = transcript.scrollHeight;
+  return bubble;
+}
+
+// Answer a follow-up against the captured context, with no re-capture. The
+// context and running history are sent as a multi-turn conversation.
+async function askFollowup(question) {
+  if (!capturedContext) return;
+  const apiKey = await getApiKey();
+  if (!apiKey) {
+    appendBubble("system", "No API key set. Open settings to add one.");
+    return;
+  }
+
+  appendBubble("user", question);
+  const answer = appendBubble("model", "…");
+  try {
+    const contents = buildMessages(
+      capturedContext.text || "",
+      history,
+      question,
+      capturedContext.image
+    );
+    let full = "";
+    for await (const delta of streamModel({
+      apiKey,
+      systemPrompt: FOLLOWUP_SYSTEM_PROMPT,
+      contents,
+    })) {
+      full += delta;
+      answer.textContent = full;
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    answer.textContent = full || "No answer returned.";
+    history.push({ role: "user", text: question }, { role: "model", text: full });
+  } catch (error) {
+    console.error("Follow-up failed:", error?.code || "", error?.message || error);
+    answer.textContent = "Could not get an answer. Please retry.";
+  }
+}
+
 // Store the finished summary for export and reveal the export buttons.
 function finalizeSummary(sections, title, url) {
   if (!sections) {
@@ -315,6 +379,7 @@ async function summarizePage(apiKey, tab) {
     return;
   }
   setBadge(page.method);
+  setContext({ text: page.text, title: page.title, url: page.url });
   const sections = await summarizeText(apiKey, page.text);
   finalizeSummary(sections, page.title, page.url);
 }
@@ -328,6 +393,7 @@ async function summarizeSelection(apiKey, tab) {
     return;
   }
   setBadge("selection");
+  setContext({ text, title: tab.title, url: tab.url });
   const sections = await summarizeText(apiKey, text);
   finalizeSummary(sections, tab.title, tab.url);
 }
@@ -361,6 +427,7 @@ async function summarizeRegion(apiKey, tab) {
 
   const image = await cropImage(dataUrl, result.rect, result.dpr);
   setBadge("region");
+  setContext({ image, text: "", title: tab.title, url: tab.url });
   const sections = await streamStructured(apiKey, {
     userText: REGION_USER_PROMPT,
     image,
@@ -476,6 +543,17 @@ captureModeSelect.addEventListener("change", () => {
   // Re-run in the new mode straight away, reusing the already-granted tab, so
   // the user does not have to click the icon again after switching modes.
   reSummarize();
+});
+
+// Enter sends a follow-up; the answer streams into the transcript with no
+// re-capture of the page.
+followupInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey) return;
+  event.preventDefault();
+  const question = followupInput.value.trim();
+  if (!question) return;
+  followupInput.value = "";
+  askFollowup(question);
 });
 
 // The background worker writes the tab to summarize into session storage when
