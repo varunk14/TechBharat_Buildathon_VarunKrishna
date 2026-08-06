@@ -1,0 +1,491 @@
+================================================================================
+PROGRESS LOG
+Project: Lens - in-page summarization for Chrome
+================================================================================
+
+THIS FILE IS THE SOURCE OF TRUTH FOR PROJECT STATE.
+
+Read it in full at the start of every session, before reading any code.
+Update it before every commit, in the same commit as the code change.
+Never delete past log entries. Append only.
+
+--------------------------------------------------------------------------------
+HOW TO USE THIS FILE
+--------------------------------------------------------------------------------
+
+At the start of a session:
+  1. Read CURRENT STATE to learn where the project stands.
+  2. Read NEXT ACTION to learn exactly what to do first.
+  3. Read KNOWN ISSUES so you do not rediscover a solved problem.
+  4. Read DECISIONS so you do not reverse a settled choice.
+
+At the end of a step:
+  1. Update CURRENT STATE.
+  2. Update NEXT ACTION to a single concrete sentence.
+  3. Add any new entries to KNOWN ISSUES or DECISIONS.
+  4. Append a dated entry to SESSION LOG.
+  5. Commit this file together with the code change.
+
+================================================================================
+CURRENT STATE
+================================================================================
+
+Current MVP:       MVP 0 - Repository and scaffold
+Status:            NOT STARTED
+Last commit:       none
+Last push:         none
+Tests passing:     n/a
+Extension loads:   no
+
+MVP completion:
+  [ ] MVP 0   Repository and scaffold
+  [ ] MVP 1   Shell and settings
+  [ ] MVP 2   First streaming summary
+  [ ] MVP 3   Structured output and export
+  [ ] MVP 4   Robust extraction
+  [ ] MVP 5   Selection and region capture
+  [ ] MVP 6   Follow-up questions
+  [ ] MVP 7   Failure handling
+  --- required feature set complete above this line ---
+  [ ] MVP 8   Vision summaries
+  [ ] MVP 9   PDF handling
+  [ ] MVP 10  Domain modes and language
+  [ ] MVP 11  History and privacy
+  [ ] MVP 12  Polish, README, demo
+
+================================================================================
+NEXT ACTION
+================================================================================
+
+Create the file scaffold described in PRD section 9.4, write manifest.json,
+and confirm the extension loads unpacked in chrome://extensions with zero
+console errors.
+
+================================================================================
+KNOWN ISSUES
+================================================================================
+
+(none yet)
+
+Format for entries:
+  [OPEN|FIXED] <short title>
+    Symptom:  what the user or developer observes
+    Cause:    the underlying reason, if known
+    Action:   what to do about it, or the commit that fixed it
+
+================================================================================
+DECISIONS
+================================================================================
+
+D1  No build step. Plain HTML, CSS and ES modules.
+    Reason: Chrome loads extension files directly. A bundler costs hours of
+    configuration and produces no user-visible value in a 24-hour window.
+    Settled. Do not reopen.
+
+D2  Side panel, not popup.
+    Reason: popups close on click-away, which destroys the follow-up
+    conversation state. Settled.
+
+D3  Model provider is Google Gemini Flash, behind an adapter in
+    lib/providers/. Reason: free tier, low latency, native image input for
+    the Grafana test page, strong Indic script handling for the Telugu test
+    page. Swapping providers means adding one adapter file.
+
+D4  Model API calls originate in sidepanel.js, not background.js.
+    Reason: the side panel is a full extension page with host permissions and
+    can stream a fetch response directly into the DOM. Routing through the
+    service worker requires a long-lived port and risks eviction mid-stream.
+
+D5  Permissions are limited to activeTab, scripting, storage, sidePanel, tabs,
+    plus a single host permission for the model API origin. <all_urls> is
+    forbidden. Reason: graded requirement, and activeTab already satisfies the
+    deliberate-user-action rule.
+
+================================================================================
+MVP DEFINITIONS AND EXIT CRITERIA
+================================================================================
+
+Do not begin an MVP until the previous one's tests pass and its commit is
+pushed.
+
+--------------------------------------------------------------------------------
+MVP 0 - Repository and scaffold                                    budget 45 min
+--------------------------------------------------------------------------------
+Build:
+  - Full file tree from PRD 9.4, with empty or stub files
+  - manifest.json with all permissions and the commands block
+  - .gitignore covering .env, node_modules, .DS_Store, any *key* file
+  - package.json with vitest as the only dev dependency
+  - README skeleton
+  - Remote origin connected to the existing GitHub repository
+
+Unit tests:
+  - none required
+
+Manual checks:
+  - chrome://extensions loads the unpacked folder with no errors
+  - The toolbar icon appears
+  - git remote -v shows the correct origin
+
+Exit criteria:
+  Extension loads unpacked without errors. Initial commit pushed.
+
+Commit:
+  chore(repo): scaffold manifest v3 extension structure
+
+--------------------------------------------------------------------------------
+MVP 1 - Shell and settings                                      budget 1 h 15 min
+--------------------------------------------------------------------------------
+Build:
+  - background.js with chrome.sidePanel.setPanelBehavior
+  - sidepanel.html and sidepanel.css with header, body and footer regions
+  - options.html and options.js: save, read back and delete an API key
+  - lib/storage.js wrapping chrome.storage.local
+
+Unit tests:
+  - storage.js get returns the stored value
+  - storage.js get returns a documented default when the key is absent
+  - storage.js remove clears the value
+
+Manual checks:
+  - Clicking the toolbar icon opens the side panel
+  - Ctrl+Shift+S opens the side panel
+  - Key entered in options survives a browser restart
+  - Deleting the key in options clears it
+
+Exit criteria:
+  Both invocation paths open the panel. Key round-trips through storage.
+
+Commit:
+  feat(panel): add side panel shell and api key settings page
+
+--------------------------------------------------------------------------------
+MVP 2 - First streaming summary                                 budget 2 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - content.js returning document.body.innerText via a message listener
+  - lib/providers/gemini.js implementing streamModel with SSE parsing
+  - lib/providers/index.js selecting the active provider
+  - sidepanel.js: preflight, inject, message, stream tokens into a pre element
+  - Skeleton loader painted before any network work begins
+
+Unit tests:
+  - SSE line buffering: a payload split across two chunks parses once, correctly
+  - TextDecoder with stream true preserves a multi-byte character split across
+    two chunk boundaries
+  - Provider adapter builds a request body matching the documented shape
+
+Manual checks:
+  - seangoedecke.com blog post produces streaming text
+  - Skeleton is visible before the first token
+  - First token appears within 3 seconds
+
+Exit criteria:
+  A blog page produces a visibly streaming summary end to end.
+
+Commit:
+  feat(panel): stream model summaries for the active page
+
+--------------------------------------------------------------------------------
+MVP 3 - Structured output and export                            budget 1 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - lib/prompts.js with the generic structured system prompt
+  - lib/markdown.js parsing the four sections from partial markdown
+  - Section cards in the panel that populate progressively
+  - Copy to clipboard as markdown
+  - Download as a .md file named from page title and date
+
+Unit tests:
+  - parseSections extracts all four sections from a complete response
+  - parseSections handles a response truncated mid-section without throwing
+  - parseSections returns an empty object for text with no headers
+  - Export filename is filesystem-safe for a title containing slashes and colons
+
+Manual checks:
+  - All four cards render and fill in progressively
+  - Copy places valid markdown on the clipboard
+  - Download produces a readable .md file
+  - A page with no action items shows "None found" rather than an empty card
+
+Exit criteria:
+  Structured cards render live. Both export paths work.
+
+Commit:
+  feat(panel): render structured summary sections with markdown export
+
+--------------------------------------------------------------------------------
+MVP 4 - Robust extraction                                            budget 3 h
+--------------------------------------------------------------------------------
+Build:
+  - vendor/Readability.js, called on a cloned document
+  - lib/extract.js: readability, then heuristic walk, then reported failure
+  - Heading hierarchy preserved as markdown in the heuristic path
+  - waitForStable using MutationObserver, with a hard timeout
+  - primeLazyContent scrolling and restoring the original position
+  - Same-origin iframe extraction inside try/catch
+  - lib/chunk.js with token estimation, paragraph-boundary chunking, overlap
+  - Map-reduce pipeline with Promise.all and a visible section counter
+  - Extraction method badge in the panel header
+
+Unit tests:
+  - chunkText never exceeds maxChars per chunk
+  - chunkText splits only on paragraph boundaries
+  - chunkText carries the configured overlap into the next chunk
+  - chunkText returns a single chunk for short input
+  - estimateTokens is within 20 percent of a known reference string
+  - Heuristic extractor drops script, style, nav and footer content
+  - Heuristic extractor deduplicates repeated blocks
+  - Heading levels map to the correct markdown prefix
+
+Manual checks (run the full eight-page test set):
+  - paradigmit.ai returns non-empty text
+  - thehindu.com returns headline text, not navigation
+  - eenadu.net returns Telugu text without replacement characters
+  - docs.python.org preserves code block content
+  - play.grafana.org returns little text and reports NO_TEXT honestly
+  - github PR returns comment text after the SPA settles
+  - arxiv PDF reports an honest failure at this stage
+  - seangoedecke.com returns clean article text
+  - Page scroll position is restored after extraction
+
+Exit criteria:
+  Every test page returns usable text or an honest, specific failure.
+
+Commit:
+  feat(extract): add extraction ladder with spa handling and chunking
+
+--------------------------------------------------------------------------------
+MVP 5 - Selection and region capture                                 budget 2 h
+--------------------------------------------------------------------------------
+Build:
+  - Capture mode selector in the panel header
+  - Selection mode reading window.getSelection
+  - Region overlay in content.js: drag rectangle, escape to cancel
+  - background.js chrome.tabs.captureVisibleTab handler
+  - Crop with OffscreenCanvas, multiplying all coordinates by devicePixelRatio
+
+Unit tests:
+  - Crop rectangle maths returns correct source coordinates at dpr 1
+  - Crop rectangle maths returns correct source coordinates at dpr 2 and 3
+  - A rectangle smaller than the minimum size is rejected
+  - A rectangle dragged upward or leftward normalises to positive width and height
+
+Manual checks:
+  - Selecting text and invoking summarizes only the selection
+  - Region overlay appears above all page content
+  - Escape cancels the region overlay and restores the page
+  - Crop is correctly aligned on a display at 100 percent and at 150 percent scale
+
+Exit criteria:
+  All three capture modes work. Crop is aligned on a scaled display.
+
+Commit:
+  feat(capture): add selection and drag-region capture modes
+
+--------------------------------------------------------------------------------
+MVP 6 - Follow-up questions                                     budget 1 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - Persistent question input at the panel footer, Enter to send
+  - Captured context held in panel session state
+  - Message array construction: context turn, primed assistant turn, history
+  - History trimmed to the most recent six turns
+  - Answers stream into a chat transcript above the input
+
+Unit tests:
+  - Message array places the context turn first and the new question last
+  - History longer than the limit is trimmed from the oldest end
+  - Page text is wrapped in delimiters in the context turn
+  - Asking a follow-up does not trigger re-extraction
+
+Manual checks:
+  - Two consecutive questions answered without re-capturing
+  - A question about content absent from the page returns a not-mentioned answer
+  - Switching tabs and returning preserves the conversation
+
+Exit criteria:
+  Two follow-ups answered against one capture, with no re-extraction.
+
+Commit:
+  feat(panel): add follow-up questions against captured page context
+
+--------------------------------------------------------------------------------
+MVP 7 - Failure handling                                             budget 1 h
+--------------------------------------------------------------------------------
+Build:
+  - preflight classifying tab URLs into the codes in PRD 7.8
+  - Single error renderer with title, message, code and optional action button
+  - Every catch path routed through the renderer
+  - NO_TEXT offers a "summarize visually instead" action
+
+Unit tests:
+  - preflight returns RESTRICTED_SCHEME for chrome, edge, about and devtools URLs
+  - preflight returns WEBSTORE for the Chrome Web Store origin
+  - preflight returns NOT_WEB for file and ftp schemes
+  - preflight returns ok for http and https
+  - HTTP status to error code mapping covers 401, 403, 429 and 500
+  - Extracted text under the threshold produces NO_TEXT
+
+Manual checks:
+  - chrome://settings shows the RESTRICTED_SCHEME message
+  - An invalid API key shows the AUTH message
+  - Airplane mode shows the NETWORK message
+  - No failure path ever leaves the panel blank
+
+Exit criteria:
+  Every row in PRD 7.8 produces its specified message. Required feature set
+  is now complete.
+
+Commit:
+  feat(panel): add typed failure states with specific user-facing reasons
+
+--------------------------------------------------------------------------------
+MVP 8 - Vision summaries                                             budget 2 h
+--------------------------------------------------------------------------------
+Build:
+  - Cropped region encoded as base64 and sent as an image part
+  - Vision prompt requiring metric, time range, trend and notable movements
+  - Explicit instruction to state when a label is illegible
+  - Automatic offer of vision mode when extraction returns under 200 characters
+
+Unit tests:
+  - Base64 encoding round-trips a known byte sequence
+  - Vision request body places the image part before the text part
+  - The thin-text threshold triggers the vision offer at the documented boundary
+
+Manual checks:
+  - A Grafana chart region produces a trend description
+  - Reported values match what is actually visible in the chart
+  - An illegible axis is reported as illegible, not guessed
+
+Exit criteria:
+  Grafana test page produces a faithful trend description from a region crop.
+
+Commit:
+  feat(vision): summarize screenshot regions for pages without a text layer
+
+--------------------------------------------------------------------------------
+MVP 9 - PDF handling                                                 budget 1 h
+--------------------------------------------------------------------------------
+Build:
+  - Detect .pdf URLs during preflight
+  - vendor/pdf.mjs and pdf.worker.mjs
+  - Fetch and parse from the side panel, capped at 30 pages
+  - Fall back to vision mode if parsing yields nothing
+
+Unit tests:
+  - PDF URL detection matches .pdf with and without query strings
+  - Page cap is respected for a document exceeding the limit
+  - Empty parse result routes to the vision fallback
+
+Manual checks:
+  - arxiv.org/pdf/1706.03762 produces a paper-shaped summary
+  - Reported benchmark numbers match the paper
+
+Exit criteria:
+  arXiv test page produces a usable summary.
+
+Commit:
+  feat(extract): parse pdf documents with pdfjs when the viewer blocks the dom
+
+--------------------------------------------------------------------------------
+MVP 10 - Domain modes and language                              budget 1 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - Mode table in lib/prompts.js: github-pr, gmail, jira, paper, docs, news
+  - Hostname and path matching, with a generic default
+  - Mode badge in the panel header, with a manual override dropdown
+  - Language selector: English, Hindi, Telugu, Tamil, Bengali, Marathi
+  - Script detection from Unicode ranges and the html lang attribute
+  - Indic-capable font stack in the panel CSS
+
+Unit tests:
+  - Each mode matcher selects the correct mode for a representative URL
+  - An unmatched URL falls back to generic
+  - Script detection identifies Telugu, Devanagari, Tamil and Bengali samples
+  - Script detection returns English for Latin text
+  - The language instruction is appended only when the target is not English
+
+Manual checks:
+  - Mode badge changes correctly across the eight test pages
+  - eenadu.net summarized into English, then flipped to Telugu, renders correctly
+  - No replacement characters or missing glyphs in any Indic output
+  - Proper nouns and code identifiers are not transliterated
+
+Exit criteria:
+  Badge is correct on all test pages. Telugu output renders correctly.
+
+Commit:
+  feat(prompts): add per-domain summary shapes and multilingual output
+
+--------------------------------------------------------------------------------
+MVP 11 - History and privacy                                    budget 1 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - Save each summary with id, url, title, mode, timestamp, capped at 200
+  - History view with substring search across title, url and summary
+  - lib/redact.js masking email, phone, PAN, Aadhaar and card patterns
+  - Privacy mode toggle, applied before any network call
+  - Redaction count displayed in the panel
+
+Unit tests:
+  - Each pattern masks a representative positive sample
+  - Non-matching text is returned unchanged
+  - The redaction count equals the number of substitutions made
+  - Redaction runs before the request body is constructed
+  - History is capped at the documented maximum
+  - Search matches against title, url and summary body
+
+Manual checks:
+  - A page containing an email address shows a redaction count above zero
+  - Redacted values do not appear in the network request payload
+  - History search returns a previously summarized page
+  - History survives a browser restart
+
+Exit criteria:
+  Redaction verified absent from the outbound payload. History searchable.
+
+Commit:
+  feat(privacy): redact identifiers before dispatch and store local history
+
+--------------------------------------------------------------------------------
+MVP 12 - Polish, README, demo                                   budget 1 h 30 min
+--------------------------------------------------------------------------------
+Build:
+  - Complete README per CLAUDE.md documentation rules
+  - Screenshot for the README
+  - Permission justification table
+  - Loading and empty states reviewed for every panel region
+  - Full test suite green
+  - Demo tabs pre-opened, script rehearsed three times against a timer
+  - Backup demo video recorded
+
+Unit tests:
+  - Full suite passes with no skipped tests
+
+Manual checks:
+  - A stranger can install and run the extension using only the README
+  - Repository history contains no API key
+  - Every permission has a one-sentence justification
+  - No commit message contains an emoji or an AI attribution
+
+Exit criteria:
+  Project meets every item in PRD section 12.
+
+Commit:
+  docs(readme): document install, permissions and architecture
+
+================================================================================
+SESSION LOG
+================================================================================
+
+Format:
+  [YYYY-MM-DD HH:MM] MVP <n> - <what was done>
+    Done:     what now works that did not before
+    Blocked:  anything that stopped progress
+    Next:     the immediate next step
+
+--------------------------------------------------------------------------------
+
+[not started]
