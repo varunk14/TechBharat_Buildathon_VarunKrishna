@@ -77,6 +77,72 @@ body {
   border-radius: 6px;
 }
 
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.summary {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
+.error {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.error p {
+  margin: 0 0 6px;
+}
+
+#error-action {
+  margin-top: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  color: #ffffff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Skeleton loader: shimmering bars shown before the first token. */
+#skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sk-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--border) 25%,
+    var(--bg) 37%,
+    var(--border) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+
+.sk-line.short {
+  width: 60%;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
 .muted {
   color: var(--muted);
 }

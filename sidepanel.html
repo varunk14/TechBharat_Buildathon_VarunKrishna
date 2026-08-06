@@ -8,21 +8,38 @@
   </head>
   <body>
     <div id="panel">
-      <!-- Header: title now; capture-mode and extraction-method controls land
-           in MVP 4 and MVP 5. -->
+      <!-- Header: title and actions. Capture-mode and extraction-method
+           controls land in MVP 4 and MVP 5. -->
       <header id="panel-header">
         <h1 id="panel-title">Glance</h1>
-        <button id="open-settings" type="button" class="link-button">
-          Settings
-        </button>
+        <div class="header-actions">
+          <button id="summarize" type="button" class="link-button">
+            Summarize
+          </button>
+          <button id="open-settings" type="button" class="link-button">
+            Settings
+          </button>
+        </div>
       </header>
 
-      <!-- Body: where summaries and errors render. Empty state for now. -->
+      <!-- Body: skeleton while loading, then the streamed summary, or an
+           error with a reason. Exactly one is visible at a time. -->
       <main id="panel-body">
-        <p id="empty-state" class="muted">
-          Press <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, or click the
-          toolbar icon, to summarize the current page.
-        </p>
+        <div id="skeleton" hidden aria-hidden="true">
+          <div class="sk-line"></div>
+          <div class="sk-line"></div>
+          <div class="sk-line short"></div>
+          <div class="sk-line"></div>
+          <div class="sk-line short"></div>
+        </div>
+
+        <pre id="summary-output" class="summary" hidden></pre>
+
+        <div id="error" class="error" role="alert" hidden>
+          <p id="error-message"></p>
+          <p id="error-code" class="muted"></p>
+          <button id="error-action" type="button" hidden></button>
+        </div>
       </main>
 
       <!-- Footer: the follow-up question input arrives in MVP 6. -->
